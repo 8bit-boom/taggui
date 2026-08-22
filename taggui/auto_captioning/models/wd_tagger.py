@@ -40,6 +40,13 @@ def get_quantized_model_path(model_path: Path) -> Path:
     Get the path to the int8-quantized version of an ONNX model, quantizing
     and caching it next to the original model file if it does not already
     exist.
+
+    Only `MatMul` nodes are quantized. WD Tagger's ConvNeXt/EVA02 backbones
+    export their convolutions as `ConvInteger` nodes when those are also
+    quantized, which some ONNX Runtime builds don't implement (raises
+    `NOT_IMPLEMENTED: Could not find an implementation for ConvInteger` at
+    inference time). Restricting quantization to `MatMul` still shrinks the
+    model substantially while avoiding that crash.
     """
     model_path = Path(model_path)
     quantized_model_path = model_path.with_name(
@@ -49,7 +56,8 @@ def get_quantized_model_path(model_path: Path) -> Path:
               'happen once...')
         quantize_dynamic(model_input=model_path,
                          model_output=quantized_model_path,
-                         weight_type=QuantType.QUInt8)
+                         weight_type=QuantType.QUInt8,
+                         op_types_to_quantize=['MatMul'])
     return quantized_model_path
 
 
