@@ -7,9 +7,15 @@ import numpy as np
 import torch
 from PIL import Image as PilImage
 from PIL.ImageOps import exif_transpose
-from transformers import (AutoModelForVision2Seq, AutoProcessor,
-                          BatchFeature, BitsAndBytesConfig)
+from transformers import AutoProcessor, BatchFeature, BitsAndBytesConfig
 from transformers.utils.import_utils import is_torch_bf16_gpu_available
+
+try:
+    # `AutoModelForVision2Seq` was renamed to `AutoModelForImageTextToText` in
+    # transformers 5.0.
+    from transformers import AutoModelForImageTextToText as AutoModelForVision2Seq
+except ImportError:
+    from transformers import AutoModelForVision2Seq
 
 import auto_captioning.captioning_thread as captioning_thread
 from utils.enums import CaptionDevice
@@ -63,6 +69,11 @@ class AutoCaptioningModel:
         self.dtype_argument = ({'dtype': self.dtype}
                                if self.device.type == 'cuda' else {})
         self.load_in_4_bit = caption_settings['load_in_4_bit']
+        self.load_in_8_bit = caption_settings['load_in_8_bit']
+        self.cpu_offload = caption_settings['cpu_offload']
+        self.sage_attention = caption_settings['sage_attention']
+        self.wd_tagger_load_in_8_bit = caption_settings[
+            'wd_tagger_load_in_8_bit']
         self.bad_words_string = caption_settings['bad_words']
         self.forced_words_string = caption_settings['forced_words']
         self.remove_tag_separators = caption_settings['remove_tag_separators']
@@ -95,7 +106,8 @@ class AutoCaptioningModel:
                                              trust_remote_code=True)
 
     def get_model_load_arguments(self) -> dict:
-        arguments = {'device_map': self.device, 'trust_remote_code': True,
+        device_map = 'auto' if self.cpu_offload else self.device
+        arguments = {'device_map': device_map, 'trust_remote_code': True,
                      'use_safetensors': self.use_safetensors}
         if self.load_in_4_bit:
             quantization_config = BitsAndBytesConfig(
@@ -106,15 +118,25 @@ class AutoCaptioningModel:
                 bnb_4bit_use_double_quant=True
             )
             arguments['quantization_config'] = quantization_config
+        elif self.load_in_8_bit:
+            quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+            arguments['quantization_config'] = quantization_config
         if self.device.type == 'cuda':
             arguments['torch_dtype'] = self.dtype
         return arguments
+
+    def apply_sage_attention(self):
+        from sageattention import sageattn
+
+        torch.nn.functional.scaled_dot_product_attention = sageattn
 
     def load_model(self, model_load_arguments: dict):
         with self.model_load_context_manager:
             model = self.transformers_model_class.from_pretrained(
                 self.model_id, **model_load_arguments)
         model.eval()
+        if self.sage_attention and self.device.type == 'cuda':
+            self.apply_sage_attention()
         return model
 
     def patch_source_code(self) -> bool:
@@ -140,13 +162,23 @@ class AutoCaptioningModel:
         # If the processor and model were previously loaded, use them.
         processor = self.thread_parent.processor
         model = self.thread_parent.model
-        # Only GPUs support 4-bit quantization.
+        # Only GPUs support 4-bit and 8-bit quantization.
         self.load_in_4_bit = self.load_in_4_bit and self.device.type == 'cuda'
+        self.load_in_8_bit = (self.load_in_8_bit and not self.load_in_4_bit
+                              and self.device.type == 'cuda')
         if (model and self.thread_parent.model_id == self.model_id
                 and (self.thread_parent.model_device_type
                      == self.device.type)
                 and (self.thread_parent.is_model_loaded_in_4_bit
-                     == self.load_in_4_bit)):
+                     == self.load_in_4_bit)
+                and (self.thread_parent.is_model_loaded_in_8_bit
+                     == self.load_in_8_bit)
+                and (self.thread_parent.is_model_cpu_offloaded
+                     == self.cpu_offload)
+                and (self.thread_parent.is_model_using_sage_attention
+                     == self.sage_attention)
+                and (self.thread_parent.is_wd_tagger_loaded_in_8_bit
+                     == self.wd_tagger_load_in_8_bit)):
             self.processor = processor
             self.model = model
             return
@@ -168,6 +200,11 @@ class AutoCaptioningModel:
         self.thread_parent.model_id = self.model_id
         self.thread_parent.model_device_type = self.device.type
         self.thread_parent.is_model_loaded_in_4_bit = self.load_in_4_bit
+        self.thread_parent.is_model_loaded_in_8_bit = self.load_in_8_bit
+        self.thread_parent.is_model_cpu_offloaded = self.cpu_offload
+        self.thread_parent.is_model_using_sage_attention = self.sage_attention
+        self.thread_parent.is_wd_tagger_loaded_in_8_bit = (
+            self.wd_tagger_load_in_8_bit)
 
     def monkey_patch_after_loading(self):
         return

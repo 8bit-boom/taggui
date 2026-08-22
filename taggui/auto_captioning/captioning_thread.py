@@ -146,3 +146,6 @@ class CaptioningThread(QThread):
 
     def write(self, text: str):
         self.text_outputted.emit(text)
+
+    def isatty(self) -> bool:
+        return False

@@ -4,12 +4,14 @@ from PySide6.QtCore import QSettings
 DEFAULT_SETTINGS = {
     'font_size': 16,
     # Common image formats that are supported in PySide6.
-    'image_list_file_formats': 'bmp, gif, jpg, jpeg, png, tif, tiff, webp',
+    'image_list_file_formats':
+        'avif, bmp, gif, jpg, jpeg, png, tif, tiff, webp',
     'image_list_image_width': 200,
     'tag_separator': ',',
     'insert_space_after_tag_separator': True,
     'autocomplete_tags': True,
-    'models_directory_path': ''
+    'models_directory_path': '',
+    'danbooru_tags_csv_path': ''
 }
 
 

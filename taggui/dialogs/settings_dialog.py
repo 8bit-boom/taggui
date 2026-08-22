@@ -31,6 +31,8 @@ class SettingsDialog(QDialog):
                               5, 0, Qt.AlignmentFlag.AlignRight)
         grid_layout.addWidget(QLabel('Auto-captioning models directory'), 6, 0,
                               Qt.AlignmentFlag.AlignRight)
+        grid_layout.addWidget(QLabel('Danbooru tag autocomplete CSV'), 8, 0,
+                              Qt.AlignmentFlag.AlignRight)
 
         font_size_spin_box = SettingsSpinBox(
             key='font_size', default=DEFAULT_SETTINGS['font_size'],
@@ -80,6 +82,18 @@ class SettingsDialog(QDialog):
             default=DEFAULT_SETTINGS['image_list_file_formats'])
         file_types_line_edit.setMinimumWidth(400)
         file_types_line_edit.textChanged.connect(self.show_restart_warning)
+        self.danbooru_tags_csv_line_edit = SettingsLineEdit(
+            key='danbooru_tags_csv_path',
+            default=DEFAULT_SETTINGS['danbooru_tags_csv_path'])
+        self.danbooru_tags_csv_line_edit.setMinimumWidth(400)
+        self.danbooru_tags_csv_line_edit.setClearButtonEnabled(True)
+        self.danbooru_tags_csv_line_edit.textChanged.connect(
+            self.show_restart_warning)
+        danbooru_tags_csv_button = QPushButton('Select File...')
+        danbooru_tags_csv_button.setFixedWidth(
+            int(danbooru_tags_csv_button.sizeHint().width() * 1.3))
+        danbooru_tags_csv_button.clicked.connect(
+            self.set_danbooru_tags_csv_path)
 
         grid_layout.addWidget(font_size_spin_box, 0, 1,
                               Qt.AlignmentFlag.AlignLeft)
@@ -96,6 +110,10 @@ class SettingsDialog(QDialog):
         grid_layout.addWidget(self.models_directory_line_edit, 6, 1,
                               Qt.AlignmentFlag.AlignLeft)
         grid_layout.addWidget(models_directory_button, 7, 1,
+                              Qt.AlignmentFlag.AlignLeft)
+        grid_layout.addWidget(self.danbooru_tags_csv_line_edit, 8, 1,
+                              Qt.AlignmentFlag.AlignLeft)
+        grid_layout.addWidget(danbooru_tags_csv_button, 9, 1,
                               Qt.AlignmentFlag.AlignLeft)
         layout.addLayout(grid_layout)
 
@@ -153,3 +171,14 @@ class SettingsDialog(QDialog):
             dir=initial_directory_path)
         if models_directory_path:
             self.models_directory_line_edit.setText(models_directory_path)
+
+    @Slot()
+    def set_danbooru_tags_csv_path(self):
+        initial_path = (self.danbooru_tags_csv_line_edit.text()
+                        or self.settings.value('directory_path', type=str)
+                        or '')
+        danbooru_tags_csv_path, _ = QFileDialog.getOpenFileName(
+            parent=self, caption='Select Danbooru tag autocomplete CSV file',
+            dir=initial_path, filter='CSV files (*.csv)')
+        if danbooru_tags_csv_path:
+            self.danbooru_tags_csv_line_edit.setText(danbooru_tags_csv_path)

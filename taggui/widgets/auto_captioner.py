@@ -5,13 +5,14 @@ from PySide6.QtCore import QModelIndex, Qt, Signal, Slot
 from PySide6.QtGui import QFontMetrics, QTextCursor
 from PySide6.QtWidgets import (QAbstractScrollArea, QDockWidget, QFormLayout,
                                QFrame, QHBoxLayout, QLabel, QMessageBox,
-                               QPlainTextEdit, QProgressBar, QScrollArea,
-                               QVBoxLayout, QWidget)
+                               QPlainTextEdit, QProgressBar, QPushButton,
+                               QScrollArea, QVBoxLayout, QWidget)
 
 from auto_captioning.captioning_thread import CaptioningThread
 from auto_captioning.models.wd_tagger import WdTagger
-from auto_captioning.models_list import MODELS, get_model_class
+from auto_captioning.models_list import get_all_models, get_model_class
 from dialogs.caption_multiple_images_dialog import CaptionMultipleImagesDialog
+from dialogs.model_manager_dialog import ModelManagerDialog
 from models.image_list_model import ImageListModel
 from utils.big_widgets import TallPushButton
 from utils.enums import CaptionDevice, CaptionPosition
@@ -66,7 +67,14 @@ class CaptionSettingsForm(QVBoxLayout):
         # custom model that was set.
         self.model_combo_box.setEditable(True)
         self.model_combo_box.addItems(self.get_local_model_paths())
-        self.model_combo_box.addItems(MODELS)
+        self.model_combo_box.addItems(get_all_models())
+        self.model_row_container = QWidget()
+        model_row_layout = QHBoxLayout(self.model_row_container)
+        model_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.manage_models_button = QPushButton('Manage...')
+        self.manage_models_button.clicked.connect(self.show_model_manager)
+        model_row_layout.addWidget(self.model_combo_box, stretch=1)
+        model_row_layout.addWidget(self.manage_models_button)
         self.prompt_text_edit = SettingsPlainTextEdit(key='prompt')
         set_text_edit_height(self.prompt_text_edit, 4)
         self.caption_start_line_edit = SettingsLineEdit(key='caption_start')
@@ -76,15 +84,18 @@ class CaptionSettingsForm(QVBoxLayout):
         self.caption_position_combo_box.addItems(list(CaptionPosition))
         self.device_combo_box = FocusedScrollSettingsComboBox(key='device')
         self.device_combo_box.addItems(list(CaptionDevice))
-        self.load_in_4_bit_container = QWidget()
-        load_in_4_bit_layout = QHBoxLayout()
-        load_in_4_bit_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        load_in_4_bit_layout.setContentsMargins(0, 0, 0, 0)
-        self.load_in_4_bit_check_box = SettingsBigCheckBox(
-            key='load_in_4_bit', default=True)
-        load_in_4_bit_layout.addWidget(QLabel('Load in 4-bit'))
-        load_in_4_bit_layout.addWidget(self.load_in_4_bit_check_box)
-        self.load_in_4_bit_container.setLayout(load_in_4_bit_layout)
+        self.load_in_4_bit_container, self.load_in_4_bit_check_box = (
+            self.create_checkbox_row('Load in 4-bit', key='load_in_4_bit',
+                                     default=True))
+        self.load_in_8_bit_container, self.load_in_8_bit_check_box = (
+            self.create_checkbox_row('Load in 8-bit', key='load_in_8_bit',
+                                     default=False))
+        self.cpu_offload_container, self.cpu_offload_check_box = (
+            self.create_checkbox_row('CPU offload', key='cpu_offload',
+                                     default=False))
+        self.sage_attention_container, self.sage_attention_check_box = (
+            self.create_checkbox_row('Use SageAttention',
+                                     key='sage_attention', default=False))
         self.remove_tag_separators_container = QWidget()
         remove_tag_separators_layout = QHBoxLayout(
             self.remove_tag_separators_container)
@@ -97,7 +108,7 @@ class CaptionSettingsForm(QVBoxLayout):
         remove_tag_separators_layout.addWidget(remove_tag_separators_label)
         remove_tag_separators_layout.addWidget(
             self.remove_tag_separators_check_box)
-        basic_settings_form.addRow('Model', self.model_combo_box)
+        basic_settings_form.addRow('Model', self.model_row_container)
         self.prompt_label = QLabel('Prompt')
         basic_settings_form.addRow(self.prompt_label, self.prompt_text_edit)
         self.caption_start_label = QLabel('Start caption with')
@@ -108,6 +119,9 @@ class CaptionSettingsForm(QVBoxLayout):
         self.device_label = QLabel('Device')
         basic_settings_form.addRow(self.device_label, self.device_combo_box)
         basic_settings_form.addRow(self.load_in_4_bit_container)
+        basic_settings_form.addRow(self.load_in_8_bit_container)
+        basic_settings_form.addRow(self.cpu_offload_container)
+        basic_settings_form.addRow(self.sage_attention_container)
         basic_settings_form.addRow(self.remove_tag_separators_container)
 
         self.wd_tagger_settings_form_container = QWidget()
@@ -124,6 +138,9 @@ class CaptionSettingsForm(QVBoxLayout):
         self.min_probability_spin_box.setSingleStep(0.01)
         self.max_tags_spin_box = FocusedScrollSettingsSpinBox(
             key='wd_tagger_max_tags', default=30, minimum=1, maximum=999)
+        (self.wd_tagger_load_in_8_bit_container,
+         self.wd_tagger_load_in_8_bit_check_box) = self.create_checkbox_row(
+            'Load in 8-bit', key='wd_tagger_load_in_8_bit', default=False)
         tags_to_exclude_form = QFormLayout()
         tags_to_exclude_form.setRowWrapPolicy(
             QFormLayout.RowWrapPolicy.WrapAllRows)
@@ -139,6 +156,7 @@ class CaptionSettingsForm(QVBoxLayout):
         wd_tagger_settings_form.addRow('Minimum probability',
                                        self.min_probability_spin_box)
         wd_tagger_settings_form.addRow('Maximum tags', self.max_tags_spin_box)
+        wd_tagger_settings_form.addRow(self.wd_tagger_load_in_8_bit_container)
         wd_tagger_settings_form.addRow(tags_to_exclude_form)
 
         self.toggle_advanced_settings_form_button = TallPushButton(
@@ -225,7 +243,7 @@ class CaptionSettingsForm(QVBoxLayout):
         self.model_combo_box.currentTextChanged.connect(
             self.show_settings_for_model)
         self.device_combo_box.currentTextChanged.connect(
-            self.set_load_in_4_bit_visibility)
+            self.set_quantization_options_visibility)
         self.toggle_advanced_settings_form_button.clicked.connect(
             self.toggle_advanced_settings_form)
         # Make sure the minimum new token count is less than or equal to the
@@ -236,9 +254,33 @@ class CaptionSettingsForm(QVBoxLayout):
             self.min_new_token_count_spin_box.setMaximum)
 
         self.show_settings_for_model(self.model_combo_box.currentText())
-        self.set_load_in_4_bit_visibility(self.device_combo_box.currentText())
+        self.set_quantization_options_visibility(
+            self.device_combo_box.currentText())
         if not self.is_bitsandbytes_available:
             self.load_in_4_bit_check_box.setChecked(False)
+            self.load_in_8_bit_check_box.setChecked(False)
+
+    @staticmethod
+    def create_checkbox_row(label_text: str, key: str,
+                            default: bool) -> tuple[QWidget, SettingsBigCheckBox]:
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        layout.setContentsMargins(0, 0, 0, 0)
+        check_box = SettingsBigCheckBox(key=key, default=default)
+        layout.addWidget(QLabel(label_text))
+        layout.addWidget(check_box)
+        return container, check_box
+
+    @Slot()
+    def show_model_manager(self):
+        model_manager_dialog = ModelManagerDialog(parent=None)
+        model_manager_dialog.exec()
+        current_model_id = self.model_combo_box.currentText()
+        self.model_combo_box.clear()
+        self.model_combo_box.addItems(self.get_local_model_paths())
+        self.model_combo_box.addItems(get_all_models())
+        self.model_combo_box.setCurrentText(current_model_id)
 
     def get_local_model_paths(self) -> list[str]:
         models_directory_path = self.settings.value(
@@ -272,6 +314,9 @@ class CaptionSettingsForm(QVBoxLayout):
             self.device_label,
             self.device_combo_box,
             self.load_in_4_bit_container,
+            self.load_in_8_bit_container,
+            self.cpu_offload_container,
+            self.sage_attention_container,
             self.remove_tag_separators_container,
             self.horizontal_line,
             self.toggle_advanced_settings_form_button,
@@ -282,18 +327,28 @@ class CaptionSettingsForm(QVBoxLayout):
             widget.setVisible(is_wd_tagger_model)
         for widget in non_wd_tagger_widgets:
             widget.setVisible(not is_wd_tagger_model)
-        self.set_load_in_4_bit_visibility(self.device_combo_box.currentText())
+        self.set_quantization_options_visibility(
+            self.device_combo_box.currentText())
 
     @Slot(str)
-    def set_load_in_4_bit_visibility(self, device: str):
+    def set_quantization_options_visibility(self, device: str):
         model_id = self.model_combo_box.currentText()
         is_wd_tagger_model = get_model_class(model_id) == WdTagger
+        is_gpu_device = device == CaptionDevice.GPU
         if is_wd_tagger_model:
             self.load_in_4_bit_container.setVisible(False)
+            self.load_in_8_bit_container.setVisible(False)
+            self.cpu_offload_container.setVisible(False)
+            self.sage_attention_container.setVisible(False)
             return
         is_load_in_4_bit_available = (self.is_bitsandbytes_available
-                                      and device == CaptionDevice.GPU)
+                                      and is_gpu_device)
         self.load_in_4_bit_container.setVisible(is_load_in_4_bit_available)
+        is_load_in_8_bit_available = (self.is_bitsandbytes_available
+                                      and is_gpu_device)
+        self.load_in_8_bit_container.setVisible(is_load_in_8_bit_available)
+        self.cpu_offload_container.setVisible(is_gpu_device)
+        self.sage_attention_container.setVisible(is_gpu_device)
 
     @Slot()
     def toggle_advanced_settings_form(self):
@@ -315,6 +370,11 @@ class CaptionSettingsForm(QVBoxLayout):
             'device': self.device_combo_box.currentText(),
             'gpu_index': self.gpu_index_spin_box.value(),
             'load_in_4_bit': self.load_in_4_bit_check_box.isChecked(),
+            'load_in_8_bit': self.load_in_8_bit_check_box.isChecked(),
+            'cpu_offload': self.cpu_offload_check_box.isChecked(),
+            'sage_attention': self.sage_attention_check_box.isChecked(),
+            'wd_tagger_load_in_8_bit':
+                self.wd_tagger_load_in_8_bit_check_box.isChecked(),
             'remove_tag_separators':
                 self.remove_tag_separators_check_box.isChecked(),
             'bad_words': self.bad_words_line_edit.text(),
@@ -365,6 +425,10 @@ class AutoCaptioner(QDockWidget):
         self.model_id: str | None = None
         self.model_device_type: str | None = None
         self.is_model_loaded_in_4_bit = None
+        self.is_model_loaded_in_8_bit = None
+        self.is_model_cpu_offloaded = None
+        self.is_model_using_sage_attention = None
+        self.is_wd_tagger_loaded_in_8_bit = None
         # Whether the last block of text in the console text edit should be
         # replaced with the next block of text that is outputted.
         self.replace_last_console_text_edit_block = False

@@ -10,10 +10,10 @@ import exifread
 import imagesize
 from PySide6.QtCore import (QAbstractListModel, QModelIndex, QSize, Qt, Signal,
                             Slot)
-from PySide6.QtGui import QIcon, QImageReader, QPixmap
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QMessageBox
 
-from utils.image import Image
+from utils.image import Image, get_image_dimensions, load_pixmap
 from utils.settings import DEFAULT_SETTINGS, get_settings
 from utils.utils import get_confirmation_dialog_reply, pluralize
 
@@ -79,10 +79,7 @@ class ImageListModel(QAbstractListModel):
             # it. Otherwise, generate a thumbnail and save it to the image.
             if image.thumbnail:
                 return image.thumbnail
-            image_reader = QImageReader(str(image.path))
-            # Rotate the image based on the orientation tag.
-            image_reader.setAutoTransform(True)
-            pixmap = QPixmap.fromImageReader(image_reader).scaledToWidth(
+            pixmap = load_pixmap(image.path).scaledToWidth(
                 self.image_list_image_width,
                 Qt.TransformationMode.SmoothTransformation)
             thumbnail = QIcon(pixmap)
@@ -125,22 +122,28 @@ class ImageListModel(QAbstractListModel):
         for image_path in image_paths:
             try:
                 dimensions = imagesize.get(image_path)
-                # Check the Exif orientation tag and rotate the dimensions if
-                # necessary.
-                with open(image_path, 'rb') as image_file:
-                    try:
-                        exif_tags = exifread.process_file(
-                            image_file, details=False,
-                            stop_tag='Image Orientation')
-                        if 'Image Orientation' in exif_tags:
-                            orientations = (exif_tags['Image Orientation']
-                                            .values)
-                            if any(value in orientations
-                                   for value in (5, 6, 7, 8)):
-                                dimensions = (dimensions[1], dimensions[0])
-                    except Exception as exception:
-                        print(f'Failed to get Exif tags for {image_path}: '
-                              f'{exception}', file=sys.stderr)
+                if dimensions == (-1, -1):
+                    # `imagesize` cannot read the dimensions of some formats,
+                    # such as AVIF. Fall back to Pillow, which already
+                    # accounts for the Exif orientation tag.
+                    dimensions = get_image_dimensions(image_path)
+                else:
+                    # Check the Exif orientation tag and rotate the
+                    # dimensions if necessary.
+                    with open(image_path, 'rb') as image_file:
+                        try:
+                            exif_tags = exifread.process_file(
+                                image_file, details=False,
+                                stop_tag='Image Orientation')
+                            if 'Image Orientation' in exif_tags:
+                                orientations = (exif_tags['Image Orientation']
+                                                .values)
+                                if any(value in orientations
+                                       for value in (5, 6, 7, 8)):
+                                    dimensions = (dimensions[1], dimensions[0])
+                        except Exception as exception:
+                            print(f'Failed to get Exif tags for {image_path}:'
+                                  f' {exception}', file=sys.stderr)
             except (ValueError, OSError) as exception:
                 print(f'Failed to get dimensions for {image_path}: '
                       f'{exception}', file=sys.stderr)

@@ -1,3 +1,5 @@
+import json
+
 from auto_captioning.auto_captioning_model import AutoCaptioningModel
 from auto_captioning.models.florence_2 import Florence2, Florence2Promptgen
 from auto_captioning.models.joycaption import Joycaption
@@ -8,9 +10,18 @@ from auto_captioning.models.llava_next import (LlavaNext34b, LlavaNextMistral,
                                                LlavaNextVicuna)
 from auto_captioning.models.moondream import Moondream1, Moondream2
 from auto_captioning.models.phi_3_vision import Phi3Vision
+from auto_captioning.models.qwen3_5 import Qwen3_5
+from auto_captioning.models.qwen3_vl import Qwen3VL
 from auto_captioning.models.wd_tagger import WdTagger
+from utils.settings import get_settings
 
 MODELS = [
+    'Qwen/Qwen3-VL-8B-Instruct',
+    'Qwen/Qwen3-VL-2B-Instruct',
+    'huihui-ai/Qwen3-VL-8B-Instruct-abliterated',
+    'huihui-ai/Qwen3.5-8B-Instruct-abliterated',
+    'huihui-ai/Qwen3.5-4B-Instruct-abliterated',
+    'huihui-ai/Qwen3.5-2B-Instruct-abliterated',
     'fancyfeast/llama-joycaption-beta-one-hf-llava',
     'microsoft/Florence-2-large-ft',
     'microsoft/Florence-2-large',
@@ -52,8 +63,35 @@ MODELS = [
 ]
 
 
+def get_user_models() -> list[str]:
+    settings = get_settings()
+    user_models_json = settings.value('user_models', defaultValue='[]',
+                                      type=str)
+    try:
+        user_models = json.loads(user_models_json)
+    except ValueError:
+        user_models = []
+    if not isinstance(user_models, list):
+        user_models = []
+    return user_models
+
+
+def save_user_models(user_models: list[str]):
+    settings = get_settings()
+    settings.setValue('user_models', json.dumps(user_models))
+
+
+def get_all_models() -> list[str]:
+    """Get the user-added models followed by the built-in models."""
+    return get_user_models() + MODELS
+
+
 def get_model_class(model_id: str) -> type[AutoCaptioningModel]:
     lowercase_model_id = model_id.lower()
+    if 'qwen3.5' in lowercase_model_id or 'qwen3_5' in lowercase_model_id:
+        return Qwen3_5
+    if 'qwen3' in lowercase_model_id and 'vl' in lowercase_model_id:
+        return Qwen3VL
     if 'florence' in lowercase_model_id:
         if 'promptgen' in lowercase_model_id:
             return Florence2Promptgen

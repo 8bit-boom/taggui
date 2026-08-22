@@ -4,6 +4,7 @@ import sys
 import traceback
 import warnings
 
+import pillow_avif  # noqa: F401
 import transformers
 from PySide6.QtGui import QImageReader
 from PySide6.QtWidgets import QApplication, QMessageBox

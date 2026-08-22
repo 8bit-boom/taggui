@@ -7,8 +7,9 @@ from pathlib import Path
 
 import huggingface_hub
 import numpy as np
-from PIL import Image as PilImage
 from onnxruntime import InferenceSession
+from onnxruntime.quantization import QuantType, quantize_dynamic
+from PIL import Image as PilImage
 
 import auto_captioning.captioning_thread as captioning_thread
 from auto_captioning.auto_captioning_model import AutoCaptioningModel
@@ -27,16 +28,36 @@ def get_tags_to_exclude(tags_to_exclude_string: str) -> list[str]:
     return tags
 
 
+def get_quantized_model_path(model_path: Path) -> Path:
+    """
+    Get the path to the int8-quantized version of an ONNX model, quantizing
+    and caching it next to the original model file if it does not already
+    exist.
+    """
+    model_path = Path(model_path)
+    quantized_model_path = model_path.with_name(
+        f'{model_path.stem}.int8{model_path.suffix}')
+    if not quantized_model_path.is_file():
+        print('Quantizing the WD Tagger model to 8-bit. This only needs to '
+              'happen once...')
+        quantize_dynamic(model_input=model_path,
+                         model_output=quantized_model_path,
+                         weight_type=QuantType.QUInt8)
+    return quantized_model_path
+
+
 class WdTaggerModel:
-    def __init__(self, model_id: str):
+    def __init__(self, model_id: str, load_in_8_bit: bool = False):
         model_path = Path(model_id) / 'model.onnx'
         if not model_path.is_file():
-            model_path = huggingface_hub.hf_hub_download(model_id,
-                                                         filename='model.onnx')
+            model_path = Path(huggingface_hub.hf_hub_download(
+                model_id, filename='model.onnx'))
         tags_path = Path(model_id) / 'selected_tags.csv'
         if not tags_path.is_file():
             tags_path = huggingface_hub.hf_hub_download(
                 model_id, filename='selected_tags.csv')
+        if load_in_8_bit:
+            model_path = get_quantized_model_path(model_path)
         self.inference_session = InferenceSession(model_path)
         self.tags = []
         self.rating_tags_indices = []
@@ -106,7 +127,8 @@ class WdTagger(AutoCaptioningModel):
         return None
 
     def get_model(self):
-        return WdTaggerModel(self.model_id)
+        return WdTaggerModel(self.model_id,
+                             load_in_8_bit=self.wd_tagger_load_in_8_bit)
 
     def get_captioning_message(self, are_multiple_images_selected: bool,
                                captioning_start_datetime: datetime) -> str:

@@ -16,6 +16,7 @@ from pyparsing import (CaselessKeyword, CaselessLiteral, Group, OpAssoc,
                        ParseException, QuotedString, Suppress, Word,
                        infix_notation, nums, one_of, printables)
 
+from dialogs.convert_images_dialog import ConvertImagesDialog
 from models.proxy_image_list_model import ProxyImageListModel
 from utils.image import Image
 from utils.settings import get_settings
@@ -138,6 +139,9 @@ class ImageListView(QListView):
         self.copy_images_action.setShortcut('Ctrl+Shift+M')
         self.copy_images_action.triggered.connect(
             self.copy_selected_images)
+        self.convert_images_action = self.addAction('Convert Images to...')
+        self.convert_images_action.triggered.connect(
+            self.convert_selected_images)
         self.delete_images_action = self.addAction('Delete Images')
         # Setting the shortcut to `Del` creates a conflict with tag deletion.
         self.delete_images_action.setShortcut('Ctrl+Del')
@@ -159,6 +163,7 @@ class ImageListView(QListView):
         self.context_menu.addSeparator()
         self.context_menu.addAction(self.move_images_action)
         self.context_menu.addAction(self.copy_images_action)
+        self.context_menu.addAction(self.convert_images_action)
         self.context_menu.addAction(self.delete_images_action)
         self.context_menu.addAction(self.open_image_action)
         self.selectionModel().selectionChanged.connect(
@@ -281,6 +286,16 @@ class ImageListView(QListView):
                                      f'{copy_directory_path}.')
 
     @Slot()
+    def convert_selected_images(self):
+        selected_images = self.get_selected_images()
+        if not selected_images:
+            return
+        convert_images_dialog = ConvertImagesDialog(self, selected_images)
+        convert_images_dialog.images_converted.connect(
+            self.directory_reload_requested)
+        convert_images_dialog.exec()
+
+    @Slot()
     def delete_selected_images(self):
         selected_images = self.get_selected_images()
         selected_image_count = len(selected_images)
@@ -323,12 +338,15 @@ class ImageListView(QListView):
             f'Move {pluralize("Image", selected_image_count)} to...')
         copy_images_action_name = (
             f'Copy {pluralize("Image", selected_image_count)} to...')
+        convert_images_action_name = (
+            f'Convert {pluralize("Image", selected_image_count)} to...')
         delete_images_action_name = (
             f'Delete {pluralize("Image", selected_image_count)}')
         self.copy_file_names_action.setText(copy_file_names_action_name)
         self.copy_paths_action.setText(copy_paths_action_name)
         self.move_images_action.setText(move_images_action_name)
         self.copy_images_action.setText(copy_images_action_name)
+        self.convert_images_action.setText(convert_images_action_name)
         self.delete_images_action.setText(delete_images_action_name)
         self.open_image_action.setVisible(selected_image_count == 1)
 

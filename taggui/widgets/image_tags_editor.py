@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCompleter, QDockWidget,
 from transformers import PreTrainedTokenizerBase
 
 from models.proxy_image_list_model import ProxyImageListModel
-from models.tag_counter_model import TagCounterModel
+from models.tag_counter_model import DanbooruTagCompletionModel
 from utils.image import Image
 from utils.settings import DEFAULT_SETTINGS, get_settings
 from utils.text_edit_item_delegate import TextEditItemDelegate
@@ -21,8 +21,8 @@ class TagInputBox(QLineEdit):
     tags_addition_requested = Signal(list, list)
 
     def __init__(self, image_tag_list_model: QStringListModel,
-                 tag_counter_model: TagCounterModel, image_list: ImageList,
-                 tag_separator: str):
+                 tag_completion_model: DanbooruTagCompletionModel,
+                 image_list: ImageList, tag_separator: str):
         super().__init__()
         self.image_tag_list_model = image_tag_list_model
         self.image_list = image_list
@@ -35,7 +35,7 @@ class TagInputBox(QLineEdit):
             'autocomplete_tags',
             defaultValue=DEFAULT_SETTINGS['autocomplete_tags'], type=bool)
         if autocomplete_tags:
-            self.completer = QCompleter(tag_counter_model)
+            self.completer = QCompleter(tag_completion_model)
             self.setCompleter(self.completer)
             self.completer.activated.connect(lambda text: self.add_tag(text))
             # Clear the input box after the completer inserts the tag into it.
@@ -135,7 +135,7 @@ class ImageTagsList(QListView):
 
 class ImageTagsEditor(QDockWidget):
     def __init__(self, proxy_image_list_model: ProxyImageListModel,
-                 tag_counter_model: TagCounterModel,
+                 tag_completion_model: DanbooruTagCompletionModel,
                  image_tag_list_model: QStringListModel, image_list: ImageList,
                  tokenizer: PreTrainedTokenizerBase, tag_separator: str):
         super().__init__()
@@ -151,7 +151,7 @@ class ImageTagsEditor(QDockWidget):
         self.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea
                              | Qt.DockWidgetArea.RightDockWidgetArea)
         self.tag_input_box = TagInputBox(self.image_tag_list_model,
-                                         tag_counter_model, image_list,
+                                         tag_completion_model, image_list,
                                          tag_separator)
         self.image_tags_list = ImageTagsList(self.image_tag_list_model)
         self.token_count_label = QLabel()

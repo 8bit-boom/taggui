@@ -14,7 +14,7 @@ from dialogs.settings_dialog import SettingsDialog
 from models.image_list_model import ImageListModel
 from models.image_tag_list_model import ImageTagListModel
 from models.proxy_image_list_model import ProxyImageListModel
-from models.tag_counter_model import TagCounterModel
+from models.tag_counter_model import DanbooruTagCompletionModel, TagCounterModel
 from utils.big_widgets import BigPushButton
 from utils.image import Image
 from utils.key_press_forwarder import KeyPressForwarder
@@ -53,6 +53,14 @@ class MainWindow(QMainWindow):
         self.image_list_model.proxy_image_list_model = (
             self.proxy_image_list_model)
         self.tag_counter_model = TagCounterModel()
+        self.tag_completion_model = DanbooruTagCompletionModel(
+            self.tag_counter_model)
+        danbooru_tags_csv_path = self.settings.value(
+            'danbooru_tags_csv_path',
+            defaultValue=DEFAULT_SETTINGS['danbooru_tags_csv_path'], type=str)
+        if danbooru_tags_csv_path:
+            self.tag_completion_model.load_danbooru_tags_csv(
+                danbooru_tags_csv_path)
         self.image_tag_list_model = ImageTagListModel()
 
         self.setWindowIcon(QIcon(QPixmap(get_resource_path(ICON_PATH))))
@@ -68,7 +76,7 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,
                            self.image_list)
         self.image_tags_editor = ImageTagsEditor(
-            self.proxy_image_list_model, self.tag_counter_model,
+            self.proxy_image_list_model, self.tag_completion_model,
             self.image_tag_list_model, self.image_list, tokenizer,
             tag_separator)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,
