@@ -299,6 +299,29 @@ class MainWindow(QMainWindow):
         settings_dialog.exec()
 
     @Slot()
+    def reset_window_layout(self):
+        """
+        Clear the saved dock/window layout. Docks that were previously
+        floated, closed, or resized very narrow (or a layout saved by an
+        older version of the app, before some docks existed) can end up in a
+        state where a dock's content stops resizing to fit it. Restarting
+        after this clears that persisted state and restores the default
+        layout.
+        """
+        reply = QMessageBox.question(
+            self, 'Reset Window Layout',
+            'Reset the window and dock layout to the default arrangement? '
+            'You will need to restart TagGUI for this to take effect.')
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self.settings.remove('geometry')
+        self.settings.remove('window_state')
+        QMessageBox.information(
+            self, 'Reset Window Layout',
+            'The window layout has been reset. Restart TagGUI to see the '
+            'default layout.')
+
+    @Slot()
     def show_find_and_replace_dialog(self):
         find_and_replace_dialog = FindAndReplaceDialog(
             parent=self, image_list_model=self.image_list_model)
@@ -430,6 +453,12 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.toggle_tag_presets_action)
         view_menu.addAction(self.toggle_dataset_statistics_action)
         view_menu.addAction(self.toggle_auto_captioner_action)
+        view_menu.addSeparator()
+        reset_window_layout_action = QAction('Reset Window Layout...',
+                                             parent=self)
+        reset_window_layout_action.triggered.connect(
+            self.reset_window_layout)
+        view_menu.addAction(reset_window_layout_action)
 
         help_menu = menu_bar.addMenu('Help')
         open_github_repository_action = QAction('GitHub', parent=self)
