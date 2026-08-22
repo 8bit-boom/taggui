@@ -9,17 +9,17 @@ from PySide6.QtCore import (QFile, QItemSelection, QItemSelectionModel,
                             Signal, Slot)
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QDockWidget,
-                               QFileDialog, QHBoxLayout, QLabel, QLineEdit,
-                               QListView, QMenu, QMessageBox, QVBoxLayout,
-                               QWidget)
+                               QFileDialog, QHBoxLayout, QInputDialog, QLabel,
+                               QLineEdit, QListView, QMenu, QMessageBox,
+                               QToolButton, QVBoxLayout, QWidget)
 from pyparsing import (CaselessKeyword, CaselessLiteral, Group, OpAssoc,
-                       ParseException, QuotedString, Suppress, Word,
-                       infix_notation, nums, one_of, printables)
+                       ParseException, QuotedString, Regex, Suppress, Word,
+                       infix_notation, one_of, printables)
 
 from dialogs.convert_images_dialog import ConvertImagesDialog
 from models.proxy_image_list_model import ProxyImageListModel
 from utils.image import Image
-from utils.settings import get_settings
+from utils.settings import get_saved_filters, get_settings, save_saved_filters
 from utils.settings_widgets import SettingsComboBox
 from utils.utils import get_confirmation_dialog_reply, pluralize
 
@@ -49,14 +49,19 @@ class FilterLineEdit(QLineEdit):
                                     | QuotedString(quote_char="'",
                                                    esc_char='\\')
                                     | Word(printables, exclude_chars='()'))
-        string_filter_keys = ['tag', 'caption', 'name', 'path']
+        string_filter_keys = ['tag', 'caption', 'name', 'path', 'ext']
         string_filter_expressions = [Group(CaselessLiteral(key) + Suppress(':')
                                            + optionally_quoted_string)
                                      for key in string_filter_keys]
         comparison_operator = one_of('= == != < > <= >=')
-        number_filter_keys = ['tags', 'chars', 'tokens']
+        # A number, optionally with a decimal point and a `kb`/`mb`/`gb`
+        # suffix (for the `size:` filter, e.g. `size:>500kb`).
+        number_literal = Regex(r'\d+(\.\d+)?\s*(?i:[kmg]?b)?')
+        number_filter_keys = ['tags', 'chars', 'tokens', 'width', 'height',
+                              'area', 'mp', 'ratio', 'size']
         number_filter_expressions = [Group(CaselessLiteral(key) + Suppress(':')
-                                           + comparison_operator + Word(nums))
+                                           + comparison_operator
+                                           + number_literal)
                                      for key in number_filter_keys]
         string_filter_expressions = reduce(or_, string_filter_expressions)
         number_filter_expressions = reduce(or_, number_filter_expressions)
@@ -351,6 +356,75 @@ class ImageListView(QListView):
         self.open_image_action.setVisible(selected_image_count == 1)
 
 
+BUILT_IN_FILTERS = {
+    'Untagged': 'tags:=0',
+    'Over 75 tokens': 'tokens:>75',
+    'Smaller than 512px': 'width:<512 OR height:<512',
+}
+
+
+class QuickFilterButton(QToolButton):
+    """A menu of built-in and user-saved quick filters for the image list."""
+    filter_selected = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.setText('Filters')
+        self.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.menu = QMenu(self)
+        self.setMenu(self.menu)
+        self.menu.aboutToShow.connect(self.rebuild_menu)
+        self.current_filter_text = ''
+
+    @Slot(str)
+    def set_current_filter_text(self, filter_text: str):
+        self.current_filter_text = filter_text
+
+    @Slot()
+    def rebuild_menu(self):
+        self.menu.clear()
+        for name, filter_text in BUILT_IN_FILTERS.items():
+            self.menu.addAction(
+                name, lambda text=filter_text: self.filter_selected.emit(text))
+        saved_filters = get_saved_filters()
+        if saved_filters:
+            self.menu.addSeparator()
+            for name, filter_text in saved_filters.items():
+                self.menu.addAction(
+                    name,
+                    lambda text=filter_text: self.filter_selected.emit(text))
+        self.menu.addSeparator()
+        self.menu.addAction('Save Current Filter...', self.save_current_filter)
+        if saved_filters:
+            self.menu.addAction('Delete Saved Filter...',
+                                self.delete_saved_filter)
+
+    @Slot()
+    def save_current_filter(self):
+        if not self.current_filter_text.strip():
+            QMessageBox.information(self, 'Save Filter',
+                                    'Enter a filter to save first.')
+            return
+        name, is_confirmed = QInputDialog.getText(
+            self, 'Save Filter', 'Name for this filter:')
+        if not is_confirmed or not name.strip():
+            return
+        saved_filters = get_saved_filters()
+        saved_filters[name.strip()] = self.current_filter_text
+        save_saved_filters(saved_filters)
+
+    @Slot()
+    def delete_saved_filter(self):
+        saved_filters = get_saved_filters()
+        name, is_confirmed = QInputDialog.getItem(
+            self, 'Delete Saved Filter', 'Filter to delete:',
+            list(saved_filters), editable=False)
+        if not is_confirmed or name not in saved_filters:
+            return
+        del saved_filters[name]
+        save_saved_filters(saved_filters)
+
+
 class ImageList(QDockWidget):
     def __init__(self, proxy_image_list_model: ProxyImageListModel,
                  tag_separator: str, image_width: int):
@@ -363,6 +437,14 @@ class ImageList(QDockWidget):
                              | Qt.DockWidgetArea.RightDockWidgetArea)
 
         self.filter_line_edit = FilterLineEdit()
+        self.quick_filter_button = QuickFilterButton()
+        self.filter_line_edit.textChanged.connect(
+            self.quick_filter_button.set_current_filter_text)
+        self.quick_filter_button.filter_selected.connect(
+            self.filter_line_edit.setText)
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(self.filter_line_edit, stretch=1)
+        filter_layout.addWidget(self.quick_filter_button)
         selection_mode_layout = QHBoxLayout()
         selection_mode_label = QLabel('Selection mode')
         self.selection_mode_combo_box = SettingsComboBox(
@@ -377,7 +459,7 @@ class ImageList(QDockWidget):
         # A container widget is required to use a layout with a `QDockWidget`.
         container = QWidget()
         layout = QVBoxLayout(container)
-        layout.addWidget(self.filter_line_edit)
+        layout.addLayout(filter_layout)
         layout.addLayout(selection_mode_layout)
         layout.addWidget(self.list_view)
         layout.addWidget(self.image_index_label)

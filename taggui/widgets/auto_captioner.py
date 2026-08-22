@@ -3,11 +3,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, Qt, Signal, Slot
 from PySide6.QtGui import QFontMetrics, QTextCursor
-from PySide6.QtWidgets import (QAbstractScrollArea, QDockWidget, QFormLayout,
-                               QFrame, QHBoxLayout, QLabel, QMessageBox,
-                               QPlainTextEdit, QProgressBar, QPushButton,
-                               QScrollArea, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractScrollArea, QComboBox, QDockWidget,
+                               QFormLayout, QFrame, QHBoxLayout, QInputDialog,
+                               QLabel, QMessageBox, QPlainTextEdit,
+                               QProgressBar, QPushButton, QScrollArea,
+                               QVBoxLayout, QWidget)
 
+from auto_captioning.caption_profiles import (get_caption_profiles,
+                                              save_caption_profiles)
 from auto_captioning.captioning_thread import CaptioningThread
 from auto_captioning.models.wd_tagger import WdTagger
 from auto_captioning.models_list import get_all_models, get_model_class
@@ -62,6 +65,22 @@ class CaptionSettingsForm(QVBoxLayout):
             QFormLayout.RowWrapPolicy.WrapAllRows)
         basic_settings_form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        # `profile_combo_box` is a plain (not settings-backed) combo box
+        # because the selected profile itself is transient; applying it
+        # updates the individual settings widgets below, which do persist.
+        self.profile_combo_box = QComboBox()
+        self.profile_combo_box.setEditable(False)
+        self.profile_save_button = QPushButton('Save...')
+        self.profile_save_button.clicked.connect(self.save_profile)
+        self.profile_delete_button = QPushButton('Delete')
+        self.profile_delete_button.clicked.connect(self.delete_profile)
+        self.profile_row_container = QWidget()
+        profile_row_layout = QHBoxLayout(self.profile_row_container)
+        profile_row_layout.setContentsMargins(0, 0, 0, 0)
+        profile_row_layout.addWidget(self.profile_combo_box, stretch=1)
+        profile_row_layout.addWidget(self.profile_save_button)
+        profile_row_layout.addWidget(self.profile_delete_button)
+        basic_settings_form.addRow('Profile', self.profile_row_container)
         self.model_combo_box = FocusedScrollSettingsComboBox(key='model_id')
         # `setEditable()` must be called before `addItems()` to preserve any
         # custom model that was set.
@@ -259,6 +278,138 @@ class CaptionSettingsForm(QVBoxLayout):
         if not self.is_bitsandbytes_available:
             self.load_in_4_bit_check_box.setChecked(False)
             self.load_in_8_bit_check_box.setChecked(False)
+
+        self.reload_profiles()
+        # Connect this after the widgets are populated so that loading a
+        # profile does not race with the initial setup above.
+        self.profile_combo_box.currentTextChanged.connect(self.load_profile)
+
+    def reload_profiles(self):
+        self.profile_combo_box.blockSignals(True)
+        self.profile_combo_box.clear()
+        self.profile_combo_box.addItem('')
+        self.profile_combo_box.addItems(list(get_caption_profiles()))
+        self.profile_combo_box.blockSignals(False)
+
+    @Slot()
+    def save_profile(self):
+        name, is_confirmed = QInputDialog.getText(
+            None, 'Save Captioning Profile', 'Profile name:')
+        name = name.strip()
+        if not is_confirmed or not name:
+            return
+        profiles = get_caption_profiles()
+        if name in profiles:
+            reply = QMessageBox.question(
+                None, 'Save Captioning Profile',
+                f'A profile named "{name}" already exists. Overwrite it?')
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        profiles[name] = self.get_caption_settings()
+        save_caption_profiles(profiles)
+        self.reload_profiles()
+        self.profile_combo_box.blockSignals(True)
+        self.profile_combo_box.setCurrentText(name)
+        self.profile_combo_box.blockSignals(False)
+
+    @Slot(str)
+    def load_profile(self, name: str):
+        if not name:
+            return
+        profiles = get_caption_profiles()
+        caption_settings = profiles.get(name)
+        if caption_settings is None:
+            return
+        self.apply_caption_settings(caption_settings)
+
+    @Slot()
+    def delete_profile(self):
+        name = self.profile_combo_box.currentText()
+        if not name:
+            return
+        profiles = get_caption_profiles()
+        if name not in profiles:
+            return
+        reply = QMessageBox.question(
+            None, 'Delete Captioning Profile',
+            f'Delete the captioning profile "{name}"?')
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        del profiles[name]
+        save_caption_profiles(profiles)
+        self.reload_profiles()
+
+    def apply_caption_settings(self, caption_settings: dict):
+        """
+        Apply a (possibly older/incomplete) saved settings dict to the form's
+        widgets. Every widget is a `Settings*` subclass that persists to
+        `QSettings` on change, so this also becomes the new live
+        configuration.
+        """
+        current = self.get_caption_settings()
+        generation_parameters = {
+            **current['generation_parameters'],
+            **caption_settings.get('generation_parameters', {})
+        }
+        wd_tagger_settings = {
+            **current['wd_tagger_settings'],
+            **caption_settings.get('wd_tagger_settings', {})
+        }
+        self.model_combo_box.setCurrentText(
+            caption_settings.get('model_id', current['model_id']))
+        self.prompt_text_edit.setPlainText(
+            caption_settings.get('prompt', current['prompt']))
+        self.caption_start_line_edit.setText(
+            caption_settings.get('caption_start', current['caption_start']))
+        self.caption_position_combo_box.setCurrentText(
+            caption_settings.get('caption_position',
+                                 current['caption_position']))
+        self.device_combo_box.setCurrentText(
+            caption_settings.get('device', current['device']))
+        self.gpu_index_spin_box.setValue(
+            caption_settings.get('gpu_index', current['gpu_index']))
+        self.load_in_4_bit_check_box.setChecked(
+            caption_settings.get('load_in_4_bit', current['load_in_4_bit']))
+        self.load_in_8_bit_check_box.setChecked(
+            caption_settings.get('load_in_8_bit', current['load_in_8_bit']))
+        self.cpu_offload_check_box.setChecked(
+            caption_settings.get('cpu_offload', current['cpu_offload']))
+        self.sage_attention_check_box.setChecked(
+            caption_settings.get('sage_attention', current['sage_attention']))
+        self.wd_tagger_load_in_8_bit_check_box.setChecked(
+            caption_settings.get('wd_tagger_load_in_8_bit',
+                                 current['wd_tagger_load_in_8_bit']))
+        self.remove_tag_separators_check_box.setChecked(
+            caption_settings.get('remove_tag_separators',
+                                 current['remove_tag_separators']))
+        self.bad_words_line_edit.setText(
+            caption_settings.get('bad_words', current['bad_words']))
+        self.forced_words_line_edit.setText(
+            caption_settings.get('forced_words', current['forced_words']))
+        self.min_new_token_count_spin_box.setValue(
+            generation_parameters['min_new_tokens'])
+        self.max_new_token_count_spin_box.setValue(
+            generation_parameters['max_new_tokens'])
+        self.beam_count_spin_box.setValue(generation_parameters['num_beams'])
+        self.length_penalty_spin_box.setValue(
+            generation_parameters['length_penalty'])
+        self.use_sampling_check_box.setChecked(
+            generation_parameters['do_sample'])
+        self.temperature_spin_box.setValue(
+            generation_parameters['temperature'])
+        self.top_k_spin_box.setValue(generation_parameters['top_k'])
+        self.top_p_spin_box.setValue(generation_parameters['top_p'])
+        self.repetition_penalty_spin_box.setValue(
+            generation_parameters['repetition_penalty'])
+        self.no_repeat_ngram_size_spin_box.setValue(
+            generation_parameters['no_repeat_ngram_size'])
+        self.show_probabilities_check_box.setChecked(
+            wd_tagger_settings['show_probabilities'])
+        self.min_probability_spin_box.setValue(
+            wd_tagger_settings['min_probability'])
+        self.max_tags_spin_box.setValue(wd_tagger_settings['max_tags'])
+        self.tags_to_exclude_text_edit.setPlainText(
+            wd_tagger_settings['tags_to_exclude'])
 
     @staticmethod
     def create_checkbox_row(label_text: str, key: str,

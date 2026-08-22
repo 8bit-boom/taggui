@@ -37,6 +37,9 @@ class ProxyImageListModel(QSortFilterProxyModel):
                 return fnmatchcase(image.path.name, f'*{filter_[1]}*')
             if filter_[0] == 'path':
                 return fnmatchcase(str(image.path), f'*{filter_[1]}*')
+            if filter_[0] == 'ext':
+                extension = image.path.suffix.lstrip('.')
+                return fnmatchcase(extension.lower(), filter_[1].lower())
         if filter_[1] == 'AND':
             return (self.does_image_match_filter(image, filter_[0])
                     and self.does_image_match_filter(image, filter_[2:]))
@@ -53,17 +56,50 @@ class ProxyImageListModel(QSortFilterProxyModel):
             '>=': operator.ge
         }
         comparison_operator = comparison_operators[filter_[1]]
-        number_to_compare = None
-        if filter_[0] == 'tags':
-            number_to_compare = len(image.tags)
-        elif filter_[0] == 'chars':
+        number_to_compare = self.get_comparison_number(image, filter_[0])
+        if number_to_compare is None:
+            return False
+        return comparison_operator(number_to_compare,
+                                   self.parse_filter_number(filter_[2]))
+
+    def get_comparison_number(self, image: Image, key: str) -> float | None:
+        if key == 'tags':
+            return len(image.tags)
+        if key == 'chars':
             caption = self.tag_separator.join(image.tags)
-            number_to_compare = len(caption)
-        elif filter_[0] == 'tokens':
+            return len(caption)
+        if key == 'tokens':
             caption = self.tag_separator.join(image.tags)
             # Subtract 2 for the `<|startoftext|>` and `<|endoftext|>` tokens.
-            number_to_compare = len(self.tokenizer(caption).input_ids) - 2
-        return comparison_operator(number_to_compare, int(filter_[2]))
+            return len(self.tokenizer(caption).input_ids) - 2
+        if key == 'size':
+            return image.file_size
+        if image.dimensions is None:
+            return None
+        width, height = image.dimensions
+        if key == 'width':
+            return width
+        if key == 'height':
+            return height
+        if key == 'area':
+            return width * height
+        if key == 'mp':
+            return width * height / 1_000_000
+        if key == 'ratio':
+            return width / height if height else None
+        return None
+
+    @staticmethod
+    def parse_filter_number(text: str) -> float:
+        """Parse a filter value, stripping an optional `kb`/`mb`/`gb` suffix."""
+        text = text.strip().lower()
+        multipliers = {'kb': 1_000, 'mb': 1_000_000, 'gb': 1_000_000_000}
+        for suffix, multiplier in multipliers.items():
+            if text.endswith(suffix):
+                return float(text[:-len(suffix)].strip()) * multiplier
+        if text.endswith('b'):
+            text = text[:-1].strip()
+        return float(text)
 
     def filterAcceptsRow(self, source_row: int,
                          source_parent: QModelIndex) -> bool:

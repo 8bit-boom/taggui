@@ -13,6 +13,8 @@ class Image:
     dimensions: tuple[int, int] | None
     tags: list[str] = field(default_factory=list)
     thumbnail: QIcon | None = None
+    file_size: int | None = None
+    has_caption_file: bool = False
 
 
 def load_pixmap(image_path: Path) -> QPixmap:

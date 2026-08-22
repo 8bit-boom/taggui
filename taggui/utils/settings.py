@@ -1,3 +1,5 @@
+import json
+
 from PySide6.QtCore import QSettings
 
 # Defaults for settings that are accessed from multiple places.
@@ -32,3 +34,41 @@ def get_tag_separator() -> str:
     if insert_space_after_tag_separator:
         tag_separator += ' '
     return tag_separator
+
+
+def get_saved_filters() -> dict[str, str]:
+    """Get the user's saved image list filters, keyed by name."""
+    settings = get_settings()
+    saved_filters_json = settings.value('saved_filters', defaultValue='{}',
+                                        type=str)
+    try:
+        saved_filters = json.loads(saved_filters_json)
+    except ValueError:
+        saved_filters = {}
+    if not isinstance(saved_filters, dict):
+        saved_filters = {}
+    return saved_filters
+
+
+def save_saved_filters(saved_filters: dict[str, str]):
+    settings = get_settings()
+    settings.setValue('saved_filters', json.dumps(saved_filters))
+
+
+def get_tag_presets() -> list[dict]:
+    """Get the user's tag presets: `[{'name': str, 'tags': list[str]}, ...]`."""
+    settings = get_settings()
+    tag_presets_json = settings.value('tag_presets', defaultValue='[]',
+                                      type=str)
+    try:
+        tag_presets = json.loads(tag_presets_json)
+    except ValueError:
+        tag_presets = []
+    if not isinstance(tag_presets, list):
+        tag_presets = []
+    return tag_presets
+
+
+def save_tag_presets(tag_presets: list[dict]):
+    settings = get_settings()
+    settings.setValue('tag_presets', json.dumps(tag_presets))

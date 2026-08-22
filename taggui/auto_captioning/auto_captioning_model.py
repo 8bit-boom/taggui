@@ -2,6 +2,7 @@ import gc
 import re
 from contextlib import nullcontext
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
@@ -17,9 +18,15 @@ try:
 except ImportError:
     from transformers import AutoModelForVision2Seq
 
-import auto_captioning.captioning_thread as captioning_thread
 from utils.enums import CaptionDevice
 from utils.image import Image
+
+if TYPE_CHECKING:
+    # Only needed for the `captioning_thread_` type hint below. Importing
+    # this at runtime would create a circular import with
+    # `captioning_thread.py`, which imports `AutoCaptioningModel` from this
+    # module.
+    import auto_captioning.captioning_thread as captioning_thread
 
 
 def replace_template_variable(match: re.Match, image: Image) -> str:

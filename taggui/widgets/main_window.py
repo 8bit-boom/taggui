@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QMainWindow,
 from transformers import AutoTokenizer
 
 from dialogs.batch_reorder_tags_dialog import BatchReorderTagsDialog
+from dialogs.export_dataset_dialog import ExportDatasetDialog
 from dialogs.find_and_replace_dialog import FindAndReplaceDialog
 from dialogs.settings_dialog import SettingsDialog
 from models.image_list_model import ImageListModel
@@ -23,9 +24,11 @@ from utils.shortcut_remover import ShortcutRemover
 from utils.utils import get_resource_path, pluralize
 from widgets.all_tags_editor import AllTagsEditor
 from widgets.auto_captioner import AutoCaptioner
+from widgets.dataset_statistics import DatasetStatisticsPane
 from widgets.image_list import ImageList
 from widgets.image_tags_editor import ImageTagsEditor
 from widgets.image_viewer import ImageViewer
+from widgets.tag_presets import TagPresetsPane
 
 ICON_PATH = Path('images/icon.ico')
 GITHUB_REPOSITORY_URL = 'https://github.com/jhc13/taggui'
@@ -44,10 +47,12 @@ class MainWindow(QMainWindow):
             'image_list_image_width',
             defaultValue=DEFAULT_SETTINGS['image_list_image_width'], type=int)
         tag_separator = get_tag_separator()
+        self.tag_separator = tag_separator
         self.image_list_model = ImageListModel(image_list_image_width,
                                                tag_separator)
         tokenizer = AutoTokenizer.from_pretrained(
             get_resource_path(TOKENIZER_DIRECTORY_PATH))
+        self.tokenizer = tokenizer
         self.proxy_image_list_model = ProxyImageListModel(
             self.image_list_model, tokenizer, tag_separator)
         self.image_list_model.proxy_image_list_model = (
@@ -86,11 +91,22 @@ class MainWindow(QMainWindow):
                                                 .all_tags_list)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,
                            self.all_tags_editor)
+        self.tag_presets = TagPresetsPane(self.image_list_model,
+                                          self.image_list)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,
+                           self.tag_presets)
+        self.tabifyDockWidget(self.all_tags_editor, self.tag_presets)
+        self.dataset_statistics = DatasetStatisticsPane(
+            self.image_list_model, self.tag_counter_model, tokenizer,
+            tag_separator)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,
+                           self.dataset_statistics)
+        self.tabifyDockWidget(self.tag_presets, self.dataset_statistics)
         self.auto_captioner = AutoCaptioner(self.image_list_model,
                                             self.image_list)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,
                            self.auto_captioner)
-        self.tabifyDockWidget(self.all_tags_editor, self.auto_captioner)
+        self.tabifyDockWidget(self.dataset_statistics, self.auto_captioner)
         self.all_tags_editor.raise_()
         # Set default widths for the dock widgets.
         # Temporarily set a size for the window so that the dock widgets can be
@@ -113,6 +129,9 @@ class MainWindow(QMainWindow):
         self.toggle_image_tags_editor_action = QAction('Image Tags',
                                                        parent=self)
         self.toggle_all_tags_editor_action = QAction('All Tags', parent=self)
+        self.toggle_tag_presets_action = QAction('Tag Presets', parent=self)
+        self.toggle_dataset_statistics_action = QAction('Statistics',
+                                                        parent=self)
         self.toggle_auto_captioner_action = QAction('Auto-Captioner',
                                                     parent=self)
         self.create_menus()
@@ -124,6 +143,8 @@ class MainWindow(QMainWindow):
         self.connect_image_list_signals()
         self.connect_image_tags_editor_signals()
         self.connect_all_tags_editor_signals()
+        self.connect_dataset_statistics_signals()
+        self.connect_tag_presets_signals()
         self.connect_auto_captioner_signals()
         # Forward any unhandled image changing key presses to the image list.
         key_press_forwarder = KeyPressForwarder(
@@ -185,6 +206,15 @@ class MainWindow(QMainWindow):
             QKeySequence('Ctrl+J'), self)
         jump_to_first_untagged_image_shortcut.activated.connect(
             self.image_list.jump_to_first_untagged_image)
+        # Alt+1...Alt+9 apply or remove the corresponding tag preset.
+        self.tag_preset_shortcuts = []
+        for preset_index in range(9):
+            tag_preset_shortcut = QShortcut(
+                QKeySequence(f'Alt+{preset_index + 1}'), self)
+            tag_preset_shortcut.activated.connect(
+                lambda index=preset_index: self.tag_presets.toggle_preset(
+                    index))
+            self.tag_preset_shortcuts.append(tag_preset_shortcut)
         self.restore()
         self.image_tags_editor.tag_input_box.setFocus()
 
@@ -275,6 +305,14 @@ class MainWindow(QMainWindow):
         find_and_replace_dialog.exec()
 
     @Slot()
+    def show_export_dataset_dialog(self):
+        export_dataset_dialog = ExportDatasetDialog(
+            parent=self, image_list_model=self.image_list_model,
+            tag_counter_model=self.tag_counter_model,
+            tokenizer=self.tokenizer, tag_separator=self.tag_separator)
+        export_dataset_dialog.exec()
+
+    @Slot()
     def show_batch_reorder_tags_dialog(self):
         batch_reorder_tags_dialog = BatchReorderTagsDialog(
             parent=self, image_list_model=self.image_list_model,
@@ -321,6 +359,11 @@ class MainWindow(QMainWindow):
             [QKeySequence('Ctrl+Shift+L'), QKeySequence('F5')])
         self.reload_directory_action.triggered.connect(self.reload_directory)
         file_menu.addAction(self.reload_directory_action)
+        export_dataset_action = QAction('Export Dataset...', parent=self)
+        export_dataset_action.setShortcut(QKeySequence('Ctrl+Shift+E'))
+        export_dataset_action.triggered.connect(
+            self.show_export_dataset_dialog)
+        file_menu.addAction(export_dataset_action)
         settings_action = QAction('Settings...', parent=self)
         settings_action.setShortcut(QKeySequence('Ctrl+Alt+S'))
         settings_action.triggered.connect(self.show_settings_dialog)
@@ -366,6 +409,8 @@ class MainWindow(QMainWindow):
         self.toggle_image_list_action.setCheckable(True)
         self.toggle_image_tags_editor_action.setCheckable(True)
         self.toggle_all_tags_editor_action.setCheckable(True)
+        self.toggle_tag_presets_action.setCheckable(True)
+        self.toggle_dataset_statistics_action.setCheckable(True)
         self.toggle_auto_captioner_action.setCheckable(True)
         self.toggle_image_list_action.triggered.connect(
             lambda is_checked: self.image_list.setVisible(is_checked))
@@ -373,11 +418,17 @@ class MainWindow(QMainWindow):
             lambda is_checked: self.image_tags_editor.setVisible(is_checked))
         self.toggle_all_tags_editor_action.triggered.connect(
             lambda is_checked: self.all_tags_editor.setVisible(is_checked))
+        self.toggle_tag_presets_action.triggered.connect(
+            lambda is_checked: self.tag_presets.setVisible(is_checked))
+        self.toggle_dataset_statistics_action.triggered.connect(
+            lambda is_checked: self.dataset_statistics.setVisible(is_checked))
         self.toggle_auto_captioner_action.triggered.connect(
             lambda is_checked: self.auto_captioner.setVisible(is_checked))
         view_menu.addAction(self.toggle_image_list_action)
         view_menu.addAction(self.toggle_image_tags_editor_action)
         view_menu.addAction(self.toggle_all_tags_editor_action)
+        view_menu.addAction(self.toggle_tag_presets_action)
+        view_menu.addAction(self.toggle_dataset_statistics_action)
         view_menu.addAction(self.toggle_auto_captioner_action)
 
         help_menu = menu_bar.addMenu('Help')
@@ -550,6 +601,26 @@ class MainWindow(QMainWindow):
         self.all_tags_editor.visibilityChanged.connect(
             lambda: self.toggle_all_tags_editor_action.setChecked(
                 self.all_tags_editor.isVisible()))
+
+    def connect_dataset_statistics_signals(self):
+        self.dataset_statistics.image_list_filter_requested.connect(
+            self.image_list.filter_line_edit.setText)
+        self.image_list_model.modelReset.connect(
+            self.dataset_statistics.request_refresh_if_auto_refresh_enabled)
+        self.image_list_model.dataChanged.connect(
+            self.dataset_statistics.request_refresh_if_auto_refresh_enabled)
+        self.dataset_statistics.visibilityChanged.connect(
+            lambda: self.toggle_dataset_statistics_action.setChecked(
+                self.dataset_statistics.isVisible()))
+
+    def connect_tag_presets_signals(self):
+        self.tag_presets.tags_addition_requested.connect(
+            self.image_list_model.add_tags)
+        self.tag_presets.tags_removal_requested.connect(
+            self.image_list_model.remove_tags)
+        self.tag_presets.visibilityChanged.connect(
+            lambda: self.toggle_tag_presets_action.setChecked(
+                self.tag_presets.isVisible()))
 
     def connect_auto_captioner_signals(self):
         self.auto_captioner.caption_generated.connect(

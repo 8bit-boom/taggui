@@ -150,7 +150,8 @@ class ImageListModel(QAbstractListModel):
                 dimensions = None
             tags = []
             text_file_path = image_path.with_suffix('.txt')
-            if str(text_file_path) in text_file_path_strings:
+            has_caption_file = str(text_file_path) in text_file_path_strings
+            if has_caption_file:
                 # `errors='replace'` inserts a replacement marker such as '?'
                 # when there is malformed data.
                 caption = text_file_path.read_text(encoding='utf-8',
@@ -159,7 +160,12 @@ class ImageListModel(QAbstractListModel):
                     tags = caption.split(self.tag_separator)
                     tags = [tag.strip() for tag in tags]
                     tags = [tag for tag in tags if tag]
-            image = Image(image_path, dimensions, tags)
+            try:
+                file_size = image_path.stat().st_size
+            except OSError:
+                file_size = None
+            image = Image(image_path, dimensions, tags,
+                         file_size=file_size, has_caption_file=has_caption_file)
             self.images.append(image)
         self.images.sort(key=lambda image_: image_.path)
         self.modelReset.emit()
@@ -478,6 +484,22 @@ class ImageListModel(QAbstractListModel):
         for image_index in image_indices:
             image: Image = self.data(image_index, Qt.ItemDataRole.UserRole)
             image.tags.extend(tags)
+            self.write_image_tags_to_disk(image)
+        min_image_index = min(image_indices, key=lambda index: index.row())
+        max_image_index = max(image_indices, key=lambda index: index.row())
+        self.dataChanged.emit(min_image_index, max_image_index)
+
+    @Slot(list, list)
+    def remove_tags(self, tags: list[str], image_indices: list[QModelIndex]):
+        """Remove one or more tags from one or more images."""
+        if not image_indices:
+            return
+        action_name = f'Remove {pluralize("Tag", len(tags))}'
+        should_ask_for_confirmation = len(image_indices) > 1
+        self.add_to_undo_stack(action_name, should_ask_for_confirmation)
+        for image_index in image_indices:
+            image: Image = self.data(image_index, Qt.ItemDataRole.UserRole)
+            image.tags = [tag for tag in image.tags if tag not in tags]
             self.write_image_tags_to_disk(image)
         min_image_index = min(image_indices, key=lambda index: index.row())
         max_image_index = max(image_indices, key=lambda index: index.row())
