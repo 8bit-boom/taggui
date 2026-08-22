@@ -74,12 +74,20 @@ class CaptionSettingsForm(QVBoxLayout):
         self.profile_save_button.clicked.connect(self.save_profile)
         self.profile_delete_button = QPushButton('Delete')
         self.profile_delete_button.clicked.connect(self.delete_profile)
+        # A combo box plus one or more buttons on the same row can overflow
+        # the dock's width when it's tabbed into a narrow panel (the dock's
+        # `QScrollArea` can't shrink buttons below their minimum size, so
+        # the row gets clipped instead of wrapping). Stack the buttons on
+        # their own row below the combo box instead, so they're never cut
+        # off regardless of dock width.
         self.profile_row_container = QWidget()
-        profile_row_layout = QHBoxLayout(self.profile_row_container)
+        profile_row_layout = QVBoxLayout(self.profile_row_container)
         profile_row_layout.setContentsMargins(0, 0, 0, 0)
-        profile_row_layout.addWidget(self.profile_combo_box, stretch=1)
-        profile_row_layout.addWidget(self.profile_save_button)
-        profile_row_layout.addWidget(self.profile_delete_button)
+        profile_row_layout.addWidget(self.profile_combo_box)
+        profile_buttons_layout = QHBoxLayout()
+        profile_buttons_layout.addWidget(self.profile_save_button)
+        profile_buttons_layout.addWidget(self.profile_delete_button)
+        profile_row_layout.addLayout(profile_buttons_layout)
         basic_settings_form.addRow('Profile', self.profile_row_container)
         self.model_combo_box = FocusedScrollSettingsComboBox(key='model_id')
         # `setEditable()` must be called before `addItems()` to preserve any
@@ -88,11 +96,11 @@ class CaptionSettingsForm(QVBoxLayout):
         self.model_combo_box.addItems(self.get_local_model_paths())
         self.model_combo_box.addItems(get_all_models())
         self.model_row_container = QWidget()
-        model_row_layout = QHBoxLayout(self.model_row_container)
+        model_row_layout = QVBoxLayout(self.model_row_container)
         model_row_layout.setContentsMargins(0, 0, 0, 0)
         self.manage_models_button = QPushButton('Manage...')
         self.manage_models_button.clicked.connect(self.show_model_manager)
-        model_row_layout.addWidget(self.model_combo_box, stretch=1)
+        model_row_layout.addWidget(self.model_combo_box)
         model_row_layout.addWidget(self.manage_models_button)
         self.prompt_text_edit = SettingsPlainTextEdit(key='prompt')
         set_text_edit_height(self.prompt_text_edit, 4)
