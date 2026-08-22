@@ -70,6 +70,12 @@ class CaptionSettingsForm(QVBoxLayout):
         # updates the individual settings widgets below, which do persist.
         self.profile_combo_box = QComboBox()
         self.profile_combo_box.setEditable(False)
+        # See the identical call on `model_combo_box` below for why this
+        # matters: an unusually long profile name would otherwise
+        # permanently widen the whole form.
+        self.profile_combo_box.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.profile_combo_box.setMinimumContentsLength(20)
         self.profile_save_button = QPushButton('Save...')
         self.profile_save_button.clicked.connect(self.save_profile)
         self.profile_delete_button = QPushButton('Delete')
@@ -95,6 +101,17 @@ class CaptionSettingsForm(QVBoxLayout):
         self.model_combo_box.setEditable(True)
         self.model_combo_box.addItems(self.get_local_model_paths())
         self.model_combo_box.addItems(get_all_models())
+        # A `QComboBox`'s default `SizeAdjustPolicy` (`AdjustToContentsOnFirstShow`)
+        # locks in a minimum width based on whatever text happens to be
+        # current the first time it's shown, and never shrinks back down
+        # afterward. A locally-installed model's path can be very long
+        # (e.g. `C:\models\...\snapshots\<hash>`), which then permanently
+        # forces the whole settings form wider than the dock, regardless of
+        # dock/window size. Cap the box's natural width to a fixed character
+        # count instead so long paths just get truncated in the display.
+        self.model_combo_box.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.model_combo_box.setMinimumContentsLength(20)
         self.model_row_container = QWidget()
         model_row_layout = QVBoxLayout(self.model_row_container)
         model_row_layout.setContentsMargins(0, 0, 0, 0)
