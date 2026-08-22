@@ -1,7 +1,17 @@
 import re
 
 import torch
-from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+from transformers import AutoProcessor
+
+try:
+    # Only available in newer releases of `transformers`. Imported
+    # defensively so that an older installed version doesn't prevent the
+    # rest of the app (and every other model) from starting up; selecting
+    # this model with an old `transformers` instead raises a clear error at
+    # caption time via `get_additional_error_message()` below.
+    from transformers import Qwen3VLForConditionalGeneration
+except ImportError:
+    Qwen3VLForConditionalGeneration = None
 
 from auto_captioning.auto_captioning_model import AutoCaptioningModel
 from utils.image import Image
@@ -16,6 +26,13 @@ THINK_BLOCK_PATTERN = re.compile(r'<think>.*?</think>', re.DOTALL)
 class Qwen3VL(AutoCaptioningModel):
     dtype = torch.bfloat16
     transformers_model_class = Qwen3VLForConditionalGeneration
+
+    def get_additional_error_message(self) -> str | None:
+        if Qwen3VLForConditionalGeneration is None:
+            return ('Qwen3-VL requires a newer version of the `transformers` '
+                    'package than is currently installed. Upgrade it with '
+                    '`pip install -U transformers`.')
+        return None
 
     def get_processor(self):
         return AutoProcessor.from_pretrained(

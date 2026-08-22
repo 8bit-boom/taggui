@@ -4,6 +4,7 @@ import csv
 import re
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import huggingface_hub
 import numpy as np
@@ -11,9 +12,15 @@ from onnxruntime import InferenceSession
 from onnxruntime.quantization import QuantType, quantize_dynamic
 from PIL import Image as PilImage
 
-import auto_captioning.captioning_thread as captioning_thread
 from auto_captioning.auto_captioning_model import AutoCaptioningModel
 from utils.image import Image
+
+if TYPE_CHECKING:
+    # Only needed for the `captioning_thread_` type hint below. Importing
+    # this at runtime would create a circular import with
+    # `captioning_thread.py`, which (transitively, via `models_list.py`)
+    # imports this module.
+    import auto_captioning.captioning_thread as captioning_thread
 
 KAOMOJIS = ['0_0', '(o)_(o)', '+_+', '+_-', '._.', '<o>_<o>', '<|>_<|>', '=_=',
             '>_<', '3_3', '6_9', '>_o', '@_@', '^_^', 'o_o', 'u_u', 'x_x',
