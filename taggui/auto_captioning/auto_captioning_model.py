@@ -12,6 +12,18 @@ from transformers import AutoProcessor, BatchFeature, BitsAndBytesConfig
 from transformers.utils.import_utils import is_torch_bf16_gpu_available
 
 try:
+    # `sageattention` only ships prebuilt wheels for Linux (see
+    # `requirements.txt`), so it is not installed on Windows/macOS. Imported
+    # defensively here so that enabling the `Sage attention` option on a
+    # platform without it fails with a clear message via `get_error_message`
+    # below, instead of a raw `ModuleNotFoundError` mid-captioning after the
+    # model has already been loaded.
+    import sageattention
+    IS_SAGE_ATTENTION_AVAILABLE = True
+except ImportError:
+    IS_SAGE_ATTENTION_AVAILABLE = False
+
+try:
     # `AutoModelForVision2Seq` was renamed to `AutoModelForImageTextToText` in
     # transformers 5.0.
     from transformers import AutoModelForImageTextToText as AutoModelForVision2Seq
@@ -106,6 +118,12 @@ class AutoCaptioningModel:
         if self.forced_words_string.strip() and self.beam_count < 2:
             return ('`Number of beams` must be greater than 1 when `Include '
                     'in caption` is not empty.')
+        if (self.sage_attention and self.device.type == 'cuda'
+                and not IS_SAGE_ATTENTION_AVAILABLE):
+            return ('The `sageattention` package is not installed (it only '
+                    'has prebuilt wheels for Linux, so it is not installed '
+                    'by default on Windows or macOS). Install it manually to '
+                    'use `Sage attention`, or disable that option.')
         return self.get_additional_error_message()
 
     def get_processor(self):
@@ -133,9 +151,8 @@ class AutoCaptioningModel:
         return arguments
 
     def apply_sage_attention(self):
-        from sageattention import sageattn
-
-        torch.nn.functional.scaled_dot_product_attention = sageattn
+        torch.nn.functional.scaled_dot_product_attention = (
+            sageattention.sageattn)
 
     def load_model(self, model_load_arguments: dict):
         with self.model_load_context_manager:
