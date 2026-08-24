@@ -37,6 +37,93 @@ installing the dependencies in `requirements.txt`.
 Run `taggui/run_gui.py` to start the program.
 Python 3.12 is recommended, but Python 3.11 should also work.
 
+### Manual installation (Windows)
+
+1. Install [Git](https://git-scm.com/downloads) and
+   [Python 3.11 or 3.12](https://www.python.org/downloads/) if you don't
+   already have them.
+2. Clone the repository (or download and extract the ZIP from the green
+   `Code` button on GitHub if you don't want to use Git):
+   ```
+   git clone https://github.com/8bit-boom/taggui.git
+   cd taggui
+   ```
+3. Run `install.bat`. This creates a virtual environment in `venv` and
+   installs everything listed in `requirements.txt`, including a CUDA build
+   of PyTorch.
+4. Run `taggui.bat` to start the program.
+5. To update later, run `update.bat`. It pulls the latest changes and
+   upgrades all dependencies in the existing `venv`.
+
+If you'd rather not use the `.bat` scripts, the equivalent manual commands
+are:
+```
+py -3.11 -m venv venv
+venv\Scripts\activate.bat
+pip install -r requirements.txt
+python taggui\run_gui.py
+```
+
+### Manual installation (Linux)
+
+1. Make sure Python 3.11 or 3.12 is installed, along with `libxcb-cursor0`
+   (see the note above).
+2. Clone the repository, create a virtual environment, and install the
+   dependencies:
+   ```
+   git clone https://github.com/8bit-boom/taggui.git
+   cd taggui
+   python3.11 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+3. Start the program:
+   ```
+   python taggui/run_gui.py
+   ```
+4. To update later:
+   ```
+   git pull
+   source venv/bin/activate
+   pip install -r requirements.txt --upgrade
+   ```
+
+### Optional: enabling Sage Attention
+
+The `Sage attention` option in the Auto-Captioner settings speeds up
+generation on a compatible NVIDIA GPU. It's entirely optional — captioning
+works normally without it, and leaving the option unchecked requires no
+extra setup.
+
+- **Linux**: `sageattention` is installed automatically as part of
+  `requirements.txt`. Nothing else to do.
+- **Windows**: `sageattention` doesn't publish official Windows wheels on
+  PyPI, so it has to be installed separately from a community-built wheel:
+  1. With your venv activated, check your Python and PyTorch versions:
+     ```
+     python --version
+     python -c "import torch; print(torch.__version__)"
+     ```
+  2. Go to the
+     [SageAttention releases page](https://github.com/woct0rdho/SageAttention/releases)
+     and find a `.whl` asset whose filename matches your Python version
+     (`cpXXX`), PyTorch version, and CUDA version (`cuXXX`). For example, for
+     Python 3.11 with the `torch==2.8.0+cu128` build that TagGUI installs by
+     default, use
+     [`v2.1.1-windows`'s `sageattention-2.1.1+cu128torch2.8.0-cp311-cp311-win_amd64.whl`](https://github.com/woct0rdho/SageAttention/releases/download/v2.1.1-windows/sageattention-2.1.1%2Bcu128torch2.8.0-cp311-cp311-win_amd64.whl).
+  3. Install it directly from the release URL:
+     ```
+     pip install <matching release asset URL>
+     ```
+  4. Verify it installed correctly:
+     ```
+     python -c "import sageattention; print('ok')"
+     ```
+
+  If `Sage attention` is enabled without the package installed, TagGUI shows
+  a clear error message instead of crashing, telling you to install it or
+  disable the option.
+
 ## Usage
 
 Load the directory containing your images by clicking the `Load Directory`
