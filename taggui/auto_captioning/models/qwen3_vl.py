@@ -60,6 +60,20 @@ class Qwen3VL(AutoCaptioningModel):
     def get_input_text(self, image_prompt: str) -> str:
         return image_prompt + self.caption_start
 
+    @staticmethod
+    def postprocess_image_prompt(image_prompt: str) -> str:
+        # The chat-templated prompt still contains the literal text of
+        # special tokens (role markers and the image placeholder), but
+        # `get_caption_from_generated_tokens` decodes the generated text
+        # with `skip_special_tokens=True`, which drops them. Strip them
+        # here too so the two strings line up and the prompt (rather than
+        # only the model's actual reply) doesn't leak into the caption.
+        special_tokens = ['<|im_start|>', '<|im_end|>', '<|vision_start|>',
+                          '<|vision_end|>', '<|image_pad|>']
+        for special_token in special_tokens:
+            image_prompt = image_prompt.replace(special_token, '')
+        return image_prompt
+
     def get_model_inputs(self, image_prompt: str, image: Image):
         text = self.get_input_text(image_prompt)
         pil_image = self.load_image(image)
