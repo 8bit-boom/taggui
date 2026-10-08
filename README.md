@@ -95,34 +95,37 @@ generation on a compatible NVIDIA GPU. It's entirely optional — captioning
 works normally without it, and leaving the option unchecked requires no
 extra setup.
 
-- **Linux**: `sageattention` is installed automatically as part of
-  `requirements.txt`. Nothing else to do.
-- **Windows**: `sageattention` doesn't publish official Windows wheels on
-  PyPI, so it has to be installed separately from a community-built wheel:
-  1. With your venv activated, check your Python and PyTorch versions:
-     ```
-     python --version
-     python -c "import torch; print(torch.__version__)"
-     ```
-  2. Go to the
-     [SageAttention releases page](https://github.com/woct0rdho/SageAttention/releases)
-     and find a `.whl` asset whose filename matches your Python version
-     (`cpXXX`), PyTorch version, and CUDA version (`cuXXX`). For example, for
-     Python 3.11 with the `torch==2.8.0+cu128` build that TagGUI installs by
-     default, use
-     [`v2.1.1-windows`'s `sageattention-2.1.1+cu128torch2.8.0-cp311-cp311-win_amd64.whl`](https://github.com/woct0rdho/SageAttention/releases/download/v2.1.1-windows/sageattention-2.1.1%2Bcu128torch2.8.0-cp311-cp311-win_amd64.whl).
-  3. Install it directly from the release URL:
-     ```
-     pip install <matching release asset URL>
-     ```
-  4. Verify it installed correctly:
-     ```
-     python -c "import sageattention; print('ok')"
-     ```
+`sageattention` is installed automatically as part of `requirements.txt`
+on Linux, and on Windows with Python 3.11 or 3.12 (`install.bat`/
+`update.bat` pull in a community-built wheel from the
+[SageAttention releases page](https://github.com/woct0rdho/SageAttention/releases),
+matching TagGUI's default `torch==2.8.0+cu128` build, since `sageattention`
+doesn't publish official wheels for Windows on PyPI). Nothing else to do
+in either case.
 
-  If `Sage attention` is enabled without the package installed, TagGUI shows
-  a clear error message instead of crashing, telling you to install it or
-  disable the option.
+On macOS, or on Windows with a different Python version, install it
+manually instead:
+1. With your venv activated, check your Python and PyTorch versions:
+   ```
+   python --version
+   python -c "import torch; print(torch.__version__)"
+   ```
+2. Go to the
+   [SageAttention releases page](https://github.com/woct0rdho/SageAttention/releases)
+   and find a `.whl` asset whose filename matches your Python version
+   (`cpXXX`), PyTorch version, and CUDA version (`cuXXX`).
+3. Install it directly from the release URL:
+   ```
+   pip install <matching release asset URL>
+   ```
+4. Verify it installed correctly:
+   ```
+   python -c "import sageattention; print('ok')"
+   ```
+
+If `Sage attention` is enabled without the package installed, TagGUI shows
+a clear error message instead of crashing, telling you to install it or
+disable the option.
 
 ## Usage
 

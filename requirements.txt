@@ -28,4 +28,9 @@ https://github.com/kingbri1/flash-attention/releases/download/v2.8.3/flash_attn-
 
 # SageAttention
 sageattention==1.0.6; platform_system == "Linux"
+# No official PyPI wheels exist for Windows, so install a community-built
+# one (from https://github.com/woct0rdho/SageAttention/releases) matching
+# the torch 2.8.0+cu128 build installed above.
+https://github.com/woct0rdho/SageAttention/releases/download/v2.1.1-windows/sageattention-2.1.1%2Bcu128torch2.8.0-cp312-cp312-win_amd64.whl; platform_system == "Windows" and python_version == "3.12"
+https://github.com/woct0rdho/SageAttention/releases/download/v2.1.1-windows/sageattention-2.1.1%2Bcu128torch2.8.0-cp311-cp311-win_amd64.whl; platform_system == "Windows" and python_version == "3.11"
 triton-windows==3.5.0.post21; platform_system == "Windows"

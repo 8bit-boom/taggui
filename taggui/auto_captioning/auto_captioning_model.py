@@ -12,12 +12,13 @@ from transformers import AutoProcessor, BatchFeature, BitsAndBytesConfig
 from transformers.utils.import_utils import is_torch_bf16_gpu_available
 
 try:
-    # `sageattention` only ships prebuilt wheels for Linux (see
-    # `requirements.txt`), so it is not installed on Windows/macOS. Imported
-    # defensively here so that enabling the `Sage attention` option on a
-    # platform without it fails with a clear message via `get_error_message`
-    # below, instead of a raw `ModuleNotFoundError` mid-captioning after the
-    # model has already been loaded.
+    # `sageattention` has no official PyPI wheels for Windows, so
+    # `requirements.txt` installs a community-built wheel there instead
+    # (only available for Python 3.11/3.12); it's not installed at all on
+    # macOS. Imported defensively here so that enabling the `Sage
+    # attention` option where it's missing fails with a clear message via
+    # `get_error_message` below, instead of a raw `ModuleNotFoundError`
+    # mid-captioning after the model has already been loaded.
     import sageattention
     IS_SAGE_ATTENTION_AVAILABLE = True
 except ImportError:
@@ -120,10 +121,11 @@ class AutoCaptioningModel:
                     'in caption` is not empty.')
         if (self.sage_attention and self.device.type == 'cuda'
                 and not IS_SAGE_ATTENTION_AVAILABLE):
-            return ('The `sageattention` package is not installed (it only '
-                    'has prebuilt wheels for Linux, so it is not installed '
-                    'by default on Windows or macOS). Install it manually to '
-                    'use `Sage attention`, or disable that option.')
+            return ('The `sageattention` package is not installed. It is '
+                    'installed automatically on Linux and on Windows with '
+                    'Python 3.11 or 3.12; on macOS, or with another Python '
+                    'version on Windows, install it manually to use `Sage '
+                    'attention`, or disable that option.')
         return self.get_additional_error_message()
 
     def get_processor(self):
