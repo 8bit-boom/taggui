@@ -37,7 +37,8 @@ captioning conventions (see notes on each model below):
 defines the same set of purposes (`PROMPT_TEMPLATE_PURPOSES`).
 """
 
-PROMPT_TEMPLATE_PURPOSES = ['General', 'Character', 'Style', 'Landscape']
+PROMPT_TEMPLATE_PURPOSES = ['General', 'Character', 'Style', 'Landscape',
+                           'Weapons']
 
 PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
     'SDXL': {
@@ -61,6 +62,10 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
         'Landscape': 'Describe this landscape image in one concise '
                      'sentence, covering the setting, time of day, '
                      'weather, and key environmental features.',
+        'Weapons': 'Describe the weapon or firearm in this image in one '
+                   'concise sentence, covering its type, how it is '
+                   'being held or positioned, and its condition or '
+                   'finish.',
     },
     'Flux.1': {
         'General': 'Describe this image the way you would prompt Flux '
@@ -85,6 +90,10 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
                      'natural-language sentences, covering the '
                      'terrain, vegetation, weather, time of day, and '
                      'lighting.',
+        'Weapons': 'Describe the weapon or firearm in this image in '
+                   'one or two natural-language sentences, covering '
+                   'its type, distinguishing features, how it is '
+                   'being held or positioned, and its setting.',
     },
     'Flux.2': {
         'General': 'Describe this image in a detailed natural-language '
@@ -112,6 +121,11 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
                      'words, covering the terrain, vegetation, '
                      'weather, time of day, lighting, and camera '
                      'perspective.',
+        'Weapons': 'Describe the weapon or firearm in this image in a '
+                   'detailed natural-language paragraph of about '
+                   '40-100 words, covering its type, distinguishing '
+                   'features, material and finish, how it is being '
+                   'held or positioned, and the setting.',
     },
     'Z-Image': {
         'General': 'Describe this image in a detailed natural-language '
@@ -139,6 +153,11 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
                      'terrain and scene, camera angle and framing, '
                      'and the lighting (direction, color, time of '
                      'day).',
+        'Weapons': 'Describe the weapon or firearm in this image in a '
+                   'detailed natural-language paragraph, covering its '
+                   'type and distinguishing features (the subject), '
+                   'the scene it is in, the camera angle and framing '
+                   '(composition), and the lighting.',
     },
     'Krea 2 Turbo': {
         'General': 'Describe this image in a detailed natural-language '
@@ -164,6 +183,11 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
                      'natural-language paragraph, covering the '
                      'terrain, weather, time of day, and lighting '
                      'conditions.',
+        'Weapons': 'Describe the weapon or firearm in this image in a '
+                   'detailed natural-language paragraph, covering its '
+                   'type, material and finish, how it is being held '
+                   'or positioned, and the lighting and camera angle. '
+                   'Do not use comma-separated tags.',
     },
     'Anima': {
         'General': 'List Danbooru-style tags describing this image, '
@@ -187,5 +211,9 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
                      'landscape image, separated by commas, covering '
                      'the setting, time of day, weather, and '
                      'background elements.',
+        'Weapons': 'List Danbooru-style tags describing the weapon in '
+                   'this image, separated by commas, covering the '
+                   'weapon type (such as gun, sword, or polearm), how '
+                   'it is being held, and any notable details.',
     },
 }
