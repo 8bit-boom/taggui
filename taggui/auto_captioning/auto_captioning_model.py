@@ -24,6 +24,12 @@ try:
 except ImportError:
     IS_SAGE_ATTENTION_AVAILABLE = False
 
+# `apply_sage_attention` below monkey-patches this process-wide, so the
+# original implementation is captured here (before any patching can occur)
+# to allow reverting it when `Sage attention` is turned back off.
+ORIGINAL_SCALED_DOT_PRODUCT_ATTENTION = (
+    torch.nn.functional.scaled_dot_product_attention)
+
 try:
     # `AutoModelForVision2Seq` was renamed to `AutoModelForImageTextToText` in
     # transformers 5.0.
@@ -153,16 +159,24 @@ class AutoCaptioningModel:
         return arguments
 
     def apply_sage_attention(self):
-        torch.nn.functional.scaled_dot_product_attention = (
-            sageattention.sageattn)
+        # This patch is process-wide (not scoped to this model instance), so
+        # it must be explicitly reverted when SageAttention isn't requested,
+        # not just left unset - otherwise a model loaded earlier with it
+        # enabled would leave every later model (including ones that never
+        # asked for it) silently running through `sageattn`.
+        if self.sage_attention and self.device.type == 'cuda':
+            torch.nn.functional.scaled_dot_product_attention = (
+                sageattention.sageattn)
+        else:
+            torch.nn.functional.scaled_dot_product_attention = (
+                ORIGINAL_SCALED_DOT_PRODUCT_ATTENTION)
 
     def load_model(self, model_load_arguments: dict):
         with self.model_load_context_manager:
             model = self.transformers_model_class.from_pretrained(
                 self.model_id, **model_load_arguments)
         model.eval()
-        if self.sage_attention and self.device.type == 'cuda':
-            self.apply_sage_attention()
+        self.apply_sage_attention()
         return model
 
     def patch_source_code(self) -> bool:

@@ -1,5 +1,6 @@
 import csv
 import json
+from collections import Counter
 from enum import Enum
 from pathlib import Path
 
@@ -9,7 +10,6 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QFileDialog, QFormLayout,
 from transformers import PreTrainedTokenizerBase
 
 from models.image_list_model import ImageListModel, Scope
-from models.tag_counter_model import TagCounterModel
 from utils.big_widgets import TallPushButton
 from utils.settings_widgets import SettingsComboBox
 
@@ -33,11 +33,9 @@ FORMAT_EXTENSIONS = {
 
 class ExportDatasetDialog(QDialog):
     def __init__(self, parent, image_list_model: ImageListModel,
-                 tag_counter_model: TagCounterModel,
                  tokenizer: PreTrainedTokenizerBase, tag_separator: str):
         super().__init__(parent)
         self.image_list_model = image_list_model
-        self.tag_counter_model = tag_counter_model
         self.tokenizer = tokenizer
         self.tag_separator = tag_separator
         self.setWindowTitle('Export Dataset')
@@ -92,7 +90,7 @@ class ExportDatasetDialog(QDialog):
             elif export_format == ExportFormat.JSONL:
                 self.export_jsonl(destination_path, images)
             elif export_format == ExportFormat.TAG_FREQUENCY_CSV:
-                self.export_tag_frequency_csv(destination_path)
+                self.export_tag_frequency_csv(destination_path, images)
             elif export_format == ExportFormat.FILE_LIST:
                 self.export_file_list(destination_path, images)
         except OSError as exception:
@@ -148,12 +146,13 @@ class ExportDatasetDialog(QDialog):
                          'text': self.tag_separator.join(image.tags)}
                 jsonl_file.write(json.dumps(record, ensure_ascii=False) + '\n')
 
-    def export_tag_frequency_csv(self, destination_path: Path):
+    def export_tag_frequency_csv(self, destination_path: Path,
+                                 images: list):
+        tag_counter = Counter(tag for image in images for tag in image.tags)
         with open(destination_path, 'w', encoding='utf-8', newline='') as csv_file:
             writer = csv.writer(csv_file)
             writer.writerow(['name', 'category', 'post_count', 'aliases'])
-            for tag, post_count in (self.tag_counter_model.tag_counter
-                                    .most_common()):
+            for tag, post_count in tag_counter.most_common():
                 writer.writerow([tag, '', post_count, ''])
 
     def export_file_list(self, destination_path: Path, images: list):

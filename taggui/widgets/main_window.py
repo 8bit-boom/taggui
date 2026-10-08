@@ -331,7 +331,6 @@ class MainWindow(QMainWindow):
     def show_export_dataset_dialog(self):
         export_dataset_dialog = ExportDatasetDialog(
             parent=self, image_list_model=self.image_list_model,
-            tag_counter_model=self.tag_counter_model,
             tokenizer=self.tokenizer, tag_separator=self.tag_separator)
         export_dataset_dialog.exec()
 
