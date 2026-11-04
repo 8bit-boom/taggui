@@ -16,7 +16,11 @@ transformers>=5.2
 timm==1.0.20
 
 # WD Tagger
-huggingface-hub==0.35.3
+# transformers>=5.2 requires a newer huggingface-hub than this package used
+# to pin (0.35.3), which made every install of a recent transformers
+# version an unsatisfiable conflict. Left as a floor, not an exact pin, so
+# pip can keep resolving it against whatever transformers version it picks.
+huggingface-hub>=1.31
 onnx==1.17.0
 onnxruntime==1.23.1
 
