@@ -1,4 +1,5 @@
 import json
+import re
 
 from auto_captioning.auto_captioning_model import AutoCaptioningModel
 from auto_captioning.models.florence_2 import Florence2, Florence2Promptgen
@@ -19,6 +20,8 @@ MODELS = [
     'Qwen/Qwen3-VL-8B-Instruct',
     'Qwen/Qwen3-VL-2B-Instruct',
     'huihui-ai/Qwen3-VL-8B-Instruct-abliterated',
+    'Qwen/Qwen3.8-27B',
+    'Qwen/Qwen3.6-27B',
     'huihui-ai/Qwen3.5-8B-Instruct-abliterated',
     'huihui-ai/Qwen3.5-4B-Instruct-abliterated',
     'huihui-ai/Qwen3.5-2B-Instruct-abliterated',
@@ -88,7 +91,15 @@ def get_all_models() -> list[str]:
 
 def get_model_class(model_id: str) -> type[AutoCaptioningModel]:
     lowercase_model_id = model_id.lower()
-    if 'qwen3.5' in lowercase_model_id or 'qwen3_5' in lowercase_model_id:
+    # Qwen3.6, Qwen3.8, and other Qwen3.x point releases beyond 3.5 are
+    # released as new checkpoints of the same `qwen3_5` model architecture
+    # in `transformers` (not a new model class each time), so they're
+    # matched generically here rather than being added one by one. This
+    # excludes MoE variants (commonly named with `moe` or `a3b`), which use
+    # a different model class that `Qwen3_5` doesn't support.
+    if (re.search(r'qwen3[._]\d', lowercase_model_id)
+            and 'moe' not in lowercase_model_id
+            and not re.search(r'a\d+b', lowercase_model_id)):
         return Qwen3_5
     if 'qwen3' in lowercase_model_id and 'vl' in lowercase_model_id:
         return Qwen3VL
