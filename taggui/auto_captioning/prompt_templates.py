@@ -19,6 +19,18 @@ captioning conventions (see notes on each model below):
   mixes of both, so its templates default to tags to match TagGUI's own
   Danbooru autocomplete support.
 
+- Character-purpose detail. These templates describe a character's full
+  physical appearance (hair, eyes, ears, face) in multiple short
+  paragraphs rather than one dense sentence, on the theory that most
+  "Character" captioning is cataloging varied characters (illustrations,
+  game assets, a cast of different people) where that detail is exactly
+  what you want captured, not withheld. If you're instead training a
+  LoRA on one single, fixed-identity character, the opposite convention
+  applies - omit the identity-defining traits (hair/eye color, face
+  shape) so they get baked into the character concept itself rather than
+  treated as a caption variable - so edit the inserted prompt down for
+  that case rather than relying on it unedited.
+
 - Whether to describe style. For a Style-purpose caption on the
   natural-language-caption models (SDXL, Flux.1, Flux.2, Z-Image,
   Krea 2), the templates deliberately ask for content only, with no style
@@ -101,14 +113,12 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
                    'to generate it: one or two natural-language '
                    'sentences (under about 75 tokens) covering the '
                    'subject, setting, composition, and lighting.',
-        'Character': 'Describe the character in this image in one or '
-                     'two natural-language sentences. Focus on what '
-                     'varies between images of them - clothing, '
-                     'accessories, pose, expression, and setting - and '
-                     'leave out fixed identity traits like hair color, '
-                     'eye color, and face shape, since those should be '
-                     'learned as part of the character rather than '
-                     'treated as variable.',
+        'Character': 'Describe the character in this image in two short '
+                     'paragraphs: the first covering their face and '
+                     'head in detail (hair, eyes, ears, mouth, and '
+                     'expression), the second their clothing, pose, '
+                     'and the setting around them, including any '
+                     'visible text or UI elements in the image.',
         'Style': 'Describe only the content of this image in one or '
                 'two natural-language sentences: the subject, setting, '
                 'and composition. Do not mention the art style, '
@@ -129,15 +139,15 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
                    'paragraph of about 40-100 words, covering the '
                    'subject, setting, composition, camera angle, and '
                    'lighting.',
-        'Character': 'Describe the character in this image in a '
-                     'detailed natural-language paragraph of about '
-                     '40-100 words. Focus on what varies between '
-                     'images of them - clothing, accessories, pose, '
-                     'expression, camera framing, and setting - and '
-                     'leave out fixed identity traits like hair color, '
-                     'eye color, and face shape, since those should be '
-                     'learned as part of the character rather than '
-                     'treated as variable.',
+        'Character': 'Describe the character in this image in two to '
+                     'three short paragraphs (about 40-100 words '
+                     'total): the first covering their face and head '
+                     'in detail (hair, eyes, ears, mouth, and '
+                     'expression), the second their clothing, pose, '
+                     'and accessories, and the third the setting, '
+                     'lighting, and camera framing around them, '
+                     'including any visible text or UI elements in '
+                     'the image.',
         'Style': 'Describe only the content of this image in a '
                 'detailed natural-language paragraph of about 40-100 '
                 'words: the subject, setting, and composition. Do not '
@@ -163,14 +173,14 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
                    'the scene (where and when), the composition '
                    '(camera angle and framing), and the lighting '
                    '(direction, color, time of day).',
-        'Character': 'Describe the character in this image in a '
-                     'detailed natural-language paragraph, covering '
-                     'their clothing, pose, expression, the scene '
-                     'around them, camera framing, and lighting. Leave '
-                     'out fixed identity traits like hair color, eye '
-                     'color, and face shape, since those should be '
-                     'learned as part of the character rather than '
-                     'treated as variable.',
+        'Character': 'Describe the character in this image in two to '
+                     'three short paragraphs, in this order: their '
+                     'face and head in close detail (hair, eyes, '
+                     'ears, mouth, and expression), then their '
+                     'clothing and pose (the subject), then the scene '
+                     'around them and the lighting (direction, color, '
+                     'time of day), including any visible text or UI '
+                     'elements in the image.',
         'Style': 'Describe only the content of this image in a '
                 'detailed natural-language paragraph: the subject, '
                 'scene, composition, and lighting. Do not mention the '
@@ -193,14 +203,14 @@ PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
                    'paragraph, covering the subject, setting, '
                    'lighting, and camera perspective. Do not use '
                    'comma-separated tags.',
-        'Character': 'Describe the person in this image in a detailed '
-                     'natural-language paragraph. Focus on what '
-                     'varies between images of them - clothing, pose, '
-                     'expression, lighting, and camera angle - and '
-                     'leave out fixed identity traits like hair '
-                     'color, eye color, and face shape, since those '
-                     'should be learned as part of the character '
-                     'rather than treated as variable.',
+        'Character': 'Describe the person in this image in two to '
+                     'three short paragraphs: the first covering '
+                     'their face and head in detail (hair, eyes, '
+                     'ears, mouth, and expression), the second their '
+                     'clothing and pose, and the third the setting, '
+                     'lighting, and camera angle, including any '
+                     'visible text or UI elements in the image. Do '
+                     'not use comma-separated tags.',
         'Style': 'Describe only the content of this image in a '
                 'detailed natural-language paragraph: the subject, '
                 'setting, and composition. Do not mention the '
