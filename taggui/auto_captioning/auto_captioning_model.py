@@ -1,5 +1,6 @@
 import gc
 import re
+import traceback
 from contextlib import nullcontext
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -374,6 +375,11 @@ class AutoCaptioningModel:
             caption = caption.replace(self.thread.tag_separator, ' ')
         return caption
 
+    @staticmethod
+    def is_exception_from_sage_attention(exception: BaseException) -> bool:
+        return any('sageattention' in (frame.filename or '').lower()
+                  for frame in traceback.extract_tb(exception.__traceback__))
+
     def generate_caption(self, model_inputs: BatchFeature | dict | np.ndarray,
                          image_prompt: str) -> tuple[str, str]:
         generation_model = self.get_generation_model()
@@ -383,10 +389,28 @@ class AutoCaptioningModel:
         additional_generation_parameters = (
             self.get_additional_generation_parameters())
         with torch.inference_mode():
-            generated_token_ids = generation_model.generate(
-                **model_inputs, bad_words_ids=bad_words_ids,
-                force_words_ids=forced_words_ids, **self.generation_parameters,
-                **additional_generation_parameters)
+            try:
+                generated_token_ids = generation_model.generate(
+                    **model_inputs, bad_words_ids=bad_words_ids,
+                    force_words_ids=forced_words_ids,
+                    **self.generation_parameters,
+                    **additional_generation_parameters)
+            except Exception as exception:
+                # SageAttention's CUDA kernels only support certain
+                # attention head sizes; a model whose architecture doesn't
+                # match one raises an opaque error deep inside
+                # `sageattention` itself (e.g. `Unsupported head_dim: 256`)
+                # instead of a clear, actionable one.
+                if (self.sage_attention
+                        and self.is_exception_from_sage_attention(exception)):
+                    raise RuntimeError(
+                        f'SageAttention failed to run with this model '
+                        f'({type(exception).__name__}: {exception}). Its '
+                        f'CUDA kernels only support certain attention head '
+                        f'sizes, and this model isn\'t compatible. Disable '
+                        f'`Sage attention` in the Auto-Captioner settings '
+                        f'to use this model.') from exception
+                raise
         caption = self.get_caption_from_generated_tokens(generated_token_ids,
                                                          image_prompt)
         console_output_caption = caption
