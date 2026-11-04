@@ -17,6 +17,7 @@ from auto_captioning.prompt_templates import (CAPTIONER_PROMPT_SUFFIXES,
                                               PROMPT_TEMPLATE_CAPTIONERS,
                                               PROMPT_TEMPLATE_PURPOSES,
                                               PROMPT_TEMPLATES)
+from auto_captioning.models.qwen3_vl import Qwen3VL
 from auto_captioning.models.wd_tagger import WdTagger
 from auto_captioning.models_list import get_all_models, get_model_class
 from dialogs.caption_multiple_images_dialog import CaptionMultipleImagesDialog
@@ -185,6 +186,9 @@ class CaptionSettingsForm(QVBoxLayout):
         self.sage_attention_container, self.sage_attention_check_box = (
             self.create_checkbox_row('Use SageAttention',
                                      key='sage_attention', default=False))
+        self.disable_thinking_container, self.disable_thinking_check_box = (
+            self.create_checkbox_row('Disable thinking',
+                                     key='disable_thinking', default=False))
         self.remove_tag_separators_container = QWidget()
         remove_tag_separators_layout = QHBoxLayout(
             self.remove_tag_separators_container)
@@ -213,6 +217,7 @@ class CaptionSettingsForm(QVBoxLayout):
         basic_settings_form.addRow(self.load_in_8_bit_container)
         basic_settings_form.addRow(self.cpu_offload_container)
         basic_settings_form.addRow(self.sage_attention_container)
+        basic_settings_form.addRow(self.disable_thinking_container)
         basic_settings_form.addRow(self.remove_tag_separators_container)
 
         self.wd_tagger_settings_form_container = QWidget()
@@ -470,6 +475,9 @@ class CaptionSettingsForm(QVBoxLayout):
             caption_settings.get('cpu_offload', current['cpu_offload']))
         self.sage_attention_check_box.setChecked(
             caption_settings.get('sage_attention', current['sage_attention']))
+        self.disable_thinking_check_box.setChecked(
+            caption_settings.get('disable_thinking',
+                                 current['disable_thinking']))
         self.wd_tagger_load_in_8_bit_check_box.setChecked(
             caption_settings.get('wd_tagger_load_in_8_bit',
                                  current['wd_tagger_load_in_8_bit']))
@@ -600,6 +608,13 @@ class CaptionSettingsForm(QVBoxLayout):
             widget.setVisible(is_wd_tagger_model)
         for widget in non_wd_tagger_widgets:
             widget.setVisible(not is_wd_tagger_model)
+        # Only the Qwen3-VL family's chat template reads `disable_thinking`
+        # (see `Qwen3VL.format_prompt()`); hide the checkbox for every other
+        # model instead of leaving a setting on screen that does nothing.
+        is_qwen3_vl_family_model = issubclass(get_model_class(model_id),
+                                              Qwen3VL)
+        self.disable_thinking_container.setVisible(
+            not is_wd_tagger_model and is_qwen3_vl_family_model)
         self.set_quantization_options_visibility(
             self.device_combo_box.currentText())
 
@@ -646,6 +661,7 @@ class CaptionSettingsForm(QVBoxLayout):
             'load_in_8_bit': self.load_in_8_bit_check_box.isChecked(),
             'cpu_offload': self.cpu_offload_check_box.isChecked(),
             'sage_attention': self.sage_attention_check_box.isChecked(),
+            'disable_thinking': self.disable_thinking_check_box.isChecked(),
             'wd_tagger_load_in_8_bit':
                 self.wd_tagger_load_in_8_bit_check_box.isChecked(),
             'remove_tag_separators':

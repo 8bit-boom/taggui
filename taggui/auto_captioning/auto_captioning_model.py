@@ -99,6 +99,10 @@ class AutoCaptioningModel:
         self.load_in_8_bit = caption_settings['load_in_8_bit']
         self.cpu_offload = caption_settings['cpu_offload']
         self.sage_attention = caption_settings['sage_attention']
+        # Only meaningful for models whose `format_prompt()` reads it (the
+        # Qwen3-VL family, as of writing); harmless to always set it here so
+        # every model follows the same `caption_settings[key]` contract.
+        self.disable_thinking = caption_settings['disable_thinking']
         self.wd_tagger_load_in_8_bit = caption_settings[
             'wd_tagger_load_in_8_bit']
         self.bad_words_string = caption_settings['bad_words']

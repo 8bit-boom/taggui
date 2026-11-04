@@ -63,7 +63,15 @@ class Qwen3VL(AutoCaptioningModel):
             }
         ]
         templated_prompt = self.processor.apply_chat_template(
-            conversation, tokenize=False, add_generation_prompt=True)
+            conversation, tokenize=False, add_generation_prompt=True,
+            # Qwen3.5/3.6's chat template puts the opening `<think>` tag in
+            # the prompt itself (not the generated output), so
+            # `enable_thinking=False` is what actually turns reasoning off
+            # for hybrid think/no-think models; models that don't define
+            # this template variable just ignore the extra argument. A
+            # dedicated "-Thinking"-only checkpoint may not honor this at
+            # all (it isn't given a real choice between modes).
+            enable_thinking=not self.disable_thinking)
         return templated_prompt
 
     def get_input_text(self, image_prompt: str) -> str:
