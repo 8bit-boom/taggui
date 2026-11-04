@@ -12,6 +12,7 @@ from auto_captioning.models.llava_next import (LlavaNext34b, LlavaNextMistral,
 from auto_captioning.models.moondream import Moondream1, Moondream2
 from auto_captioning.models.phi_3_vision import Phi3Vision
 from auto_captioning.models.qwen3_5 import Qwen3_5
+from auto_captioning.models.qwen3_5_moe import Qwen3_5Moe
 from auto_captioning.models.qwen3_vl import Qwen3VL
 from auto_captioning.models.wd_tagger import WdTagger
 from utils.settings import get_settings
@@ -22,6 +23,7 @@ MODELS = [
     'huihui-ai/Qwen3-VL-8B-Instruct-abliterated',
     'Qwen/Qwen3.8-27B',
     'Qwen/Qwen3.6-27B',
+    'Qwen/Qwen3.6-35B-A3B',
     'huihui-ai/Qwen3.5-8B-Instruct-abliterated',
     'huihui-ai/Qwen3.5-4B-Instruct-abliterated',
     'huihui-ai/Qwen3.5-2B-Instruct-abliterated',
@@ -92,14 +94,16 @@ def get_all_models() -> list[str]:
 def get_model_class(model_id: str) -> type[AutoCaptioningModel]:
     lowercase_model_id = model_id.lower()
     # Qwen3.6, Qwen3.8, and other Qwen3.x point releases beyond 3.5 are
-    # released as new checkpoints of the same `qwen3_5` model architecture
-    # in `transformers` (not a new model class each time), so they're
-    # matched generically here rather than being added one by one. This
-    # excludes MoE variants (commonly named with `moe` or `a3b`), which use
-    # a different model class that `Qwen3_5` doesn't support.
-    if (re.search(r'qwen3[._]\d', lowercase_model_id)
-            and 'moe' not in lowercase_model_id
-            and not re.search(r'a\d+b', lowercase_model_id)):
+    # released as new checkpoints of the same `qwen3_5`/`qwen3_5_moe` model
+    # architectures in `transformers` (not a new model class each time), so
+    # they're matched generically here rather than being added one by one.
+    # MoE checkpoints (commonly named with `moe` or an `a3b`-style
+    # active-parameter suffix) use a different model class, so they're
+    # routed to `Qwen3_5Moe` instead of the dense `Qwen3_5`.
+    if re.search(r'qwen3[._]\d', lowercase_model_id):
+        if ('moe' in lowercase_model_id
+                or re.search(r'a\d+b', lowercase_model_id)):
+            return Qwen3_5Moe
         return Qwen3_5
     if 'qwen3' in lowercase_model_id and 'vl' in lowercase_model_id:
         return Qwen3VL
