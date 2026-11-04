@@ -40,6 +40,35 @@ defines the same set of purposes (`PROMPT_TEMPLATE_PURPOSES`).
 PROMPT_TEMPLATE_PURPOSES = ['General', 'Character', 'Style', 'Landscape',
                            'Weapons']
 
+# Instructions tuned to a specific *captioning* model's own known quirks,
+# independent of which image-generation model the caption is destined for.
+# "Insert into Prompt" appends the selected one (if any) to the chosen
+# target-model/purpose template above, so the two combine instead of
+# needing a separate hand-written template for every
+# (image-gen model x purpose x captioner) combination.
+PROMPT_TEMPLATE_CAPTIONERS = ['(none)', 'Qwen3-VL', 'Qwen3.5', 'JoyCaption']
+
+CAPTIONER_PROMPT_SUFFIXES: dict[str, str] = {
+    # Qwen's reasoning-capable checkpoints can emit a visible
+    # `<think>...</think>` block before the actual answer (TagGUI already
+    # strips it from the output when present, but asking the model not to
+    # produce one avoids wasting generation time on it) and sometimes add a
+    # conversational preamble ("Sure, here's a description:") that isn't
+    # part of the caption itself.
+    'Qwen3-VL': 'Respond with only the final description - no reasoning, '
+               '<think> block, preamble, or meta-commentary.',
+    'Qwen3.5': 'Respond with only the final description - no reasoning, '
+              '<think> block, preamble, or meta-commentary.',
+    # JoyCaption (fancyfeast/llama-joycaption) is purpose-built for
+    # captioning rather than general chat, so it needs less of the
+    # anti-preamble instruction Qwen benefits from, but it (like most
+    # instruction-tuned VLMs) can still moralize or hedge on suggestive or
+    # unusual content instead of describing it plainly.
+    'JoyCaption': 'Respond with only the caption text, in a direct, '
+                 'literal tone - do not moralize, refuse, or add '
+                 'disclaimers.',
+}
+
 PROMPT_TEMPLATES: dict[str, dict[str, str]] = {
     'SDXL': {
         'General': 'Describe this image in a single, clear sentence '

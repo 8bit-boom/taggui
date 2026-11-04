@@ -12,7 +12,9 @@ from PySide6.QtWidgets import (QAbstractScrollArea, QComboBox, QDockWidget,
 from auto_captioning.caption_profiles import (get_caption_profiles,
                                               save_caption_profiles)
 from auto_captioning.captioning_thread import CaptioningThread
-from auto_captioning.prompt_templates import (PROMPT_TEMPLATE_PURPOSES,
+from auto_captioning.prompt_templates import (CAPTIONER_PROMPT_SUFFIXES,
+                                              PROMPT_TEMPLATE_CAPTIONERS,
+                                              PROMPT_TEMPLATE_PURPOSES,
                                               PROMPT_TEMPLATES)
 from auto_captioning.models.wd_tagger import WdTagger
 from auto_captioning.models_list import get_all_models, get_model_class
@@ -139,6 +141,12 @@ class CaptionSettingsForm(QVBoxLayout):
         self.prompt_template_purpose_combo_box.setSizeAdjustPolicy(
             QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.prompt_template_purpose_combo_box.setMinimumContentsLength(20)
+        self.prompt_template_captioner_combo_box = QComboBox()
+        self.prompt_template_captioner_combo_box.addItems(
+            PROMPT_TEMPLATE_CAPTIONERS)
+        self.prompt_template_captioner_combo_box.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.prompt_template_captioner_combo_box.setMinimumContentsLength(20)
         self.prompt_template_insert_button = QPushButton(
             'Insert into Prompt')
         self.prompt_template_insert_button.clicked.connect(
@@ -151,6 +159,8 @@ class CaptionSettingsForm(QVBoxLayout):
             self.prompt_template_model_combo_box)
         prompt_template_row_layout.addWidget(
             self.prompt_template_purpose_combo_box)
+        prompt_template_row_layout.addWidget(
+            self.prompt_template_captioner_combo_box)
         prompt_template_row_layout.addWidget(
             self.prompt_template_insert_button)
         self.prompt_text_edit = SettingsPlainTextEdit(key='prompt')
@@ -488,7 +498,11 @@ class CaptionSettingsForm(QVBoxLayout):
     def insert_prompt_template(self):
         model = self.prompt_template_model_combo_box.currentText()
         purpose = self.prompt_template_purpose_combo_box.currentText()
+        captioner = self.prompt_template_captioner_combo_box.currentText()
         template = PROMPT_TEMPLATES[model][purpose]
+        captioner_suffix = CAPTIONER_PROMPT_SUFFIXES.get(captioner)
+        if captioner_suffix:
+            template = f'{template} {captioner_suffix}'
         self.prompt_text_edit.setPlainText(template)
 
     @Slot()
