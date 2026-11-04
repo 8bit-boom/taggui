@@ -34,6 +34,15 @@ class Qwen3VL(AutoCaptioningModel):
                     '`pip install -U transformers`.')
         return None
 
+    @staticmethod
+    def get_quantization_skip_modules() -> list[str] | None:
+        # Matches the `llm_int8_skip_modules` used by community-published
+        # 4-bit/8-bit Qwen3-VL checkpoints: the vision tower (`visual`) and
+        # its patch merger (`merger`) live under `model.visual` in this
+        # model family, and `lm_head` is a top-level attribute - both are
+        # matched as substrings of each module's full dotted name.
+        return ['visual', 'merger', 'lm_head']
+
     def get_processor(self):
         return AutoProcessor.from_pretrained(
             self.model_id, trust_remote_code=True, min_pixels=MIN_PIXELS,

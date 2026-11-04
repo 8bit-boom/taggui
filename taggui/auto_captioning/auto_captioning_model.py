@@ -139,21 +139,38 @@ class AutoCaptioningModel:
         return AutoProcessor.from_pretrained(self.model_id,
                                              trust_remote_code=True)
 
+    @staticmethod
+    def get_quantization_skip_modules() -> list[str] | None:
+        """
+        Module names to exclude from 4-bit/8-bit quantization (matched as a
+        substring of each module's full dotted name). `None` quantizes
+        every `nn.Linear` layer, which is fine for a text-only model, but a
+        multimodal model's vision tower and output head are usually kept
+        in full precision - quantizing them doesn't necessarily crash, but
+        is known to noticeably hurt caption quality for not much VRAM
+        savings, since most of a vision-language model's weights are in
+        the language model to begin with.
+        """
+        return None
+
     def get_model_load_arguments(self) -> dict:
         device_map = 'auto' if self.cpu_offload else self.device
         arguments = {'device_map': device_map, 'trust_remote_code': True,
                      'use_safetensors': self.use_safetensors}
+        skip_modules = self.get_quantization_skip_modules()
         if self.load_in_4_bit:
             quantization_config = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_quant_type='nf4',
                 bnb_4bit_compute_dtype=self.dtype,
                 bnb_4bit_quant_storage=self.dtype,
-                bnb_4bit_use_double_quant=True
+                bnb_4bit_use_double_quant=True,
+                llm_int8_skip_modules=skip_modules
             )
             arguments['quantization_config'] = quantization_config
         elif self.load_in_8_bit:
-            quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+            quantization_config = BitsAndBytesConfig(
+                load_in_8bit=True, llm_int8_skip_modules=skip_modules)
             arguments['quantization_config'] = quantization_config
         if self.device.type == 'cuda':
             arguments['torch_dtype'] = self.dtype
