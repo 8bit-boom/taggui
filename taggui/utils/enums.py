@@ -24,3 +24,4 @@ class CaptionPosition(str, Enum):
 class CaptionDevice(str, Enum):
     GPU = 'GPU if available'
     CPU = 'CPU'
+    GPUS_PARALLEL = 'Multiple GPUs (parallel)'

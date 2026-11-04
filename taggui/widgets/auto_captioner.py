@@ -1,27 +1,35 @@
+import gc
 import sys
 from pathlib import Path
 
+import torch
 from PySide6.QtCore import QModelIndex, Qt, Signal, Slot
-from PySide6.QtGui import QFontMetrics, QTextCursor
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (QAbstractScrollArea, QComboBox, QDockWidget,
-                               QFormLayout, QFrame, QHBoxLayout, QInputDialog,
-                               QLabel, QMessageBox, QPlainTextEdit,
-                               QProgressBar, QPushButton, QScrollArea,
-                               QVBoxLayout, QWidget)
+                               QFormLayout, QFrame, QHBoxLayout,
+                               QInputDialog, QLabel, QLineEdit, QMessageBox,
+                               QPlainTextEdit, QProgressBar, QPushButton,
+                               QScrollArea, QVBoxLayout, QWidget)
 
+from auto_captioning.load_presets import LOAD_PRESETS
 from auto_captioning.caption_profiles import (get_caption_profiles,
                                               save_caption_profiles)
 from auto_captioning.captioning_thread import CaptioningThread
+from auto_captioning.auto_captioning_model import ATTENTION_IMPLEMENTATIONS
 from auto_captioning.generation_presets import GENERATION_PRESETS
 from auto_captioning.prompt_templates import (CAPTIONER_PROMPT_SUFFIXES,
                                               PROMPT_TEMPLATE_CAPTIONERS,
                                               PROMPT_TEMPLATE_PURPOSES,
                                               PROMPT_TEMPLATES)
-from auto_captioning.models.qwen3_vl import Qwen3VL
+from auto_captioning.models.qwen3_vl import (PIXELS_PER_VISUAL_TOKEN,
+                                             Qwen3VL)
 from auto_captioning.models.wd_tagger import WdTagger
-from auto_captioning.models_list import get_all_models, get_model_class
+from auto_captioning.models_list import (REMOTE_ENDPOINT_MODEL_ID,
+                                         get_all_models, get_model_class,
+                                         is_remote_endpoint_model)
 from dialogs.caption_multiple_images_dialog import CaptionMultipleImagesDialog
 from dialogs.model_manager_dialog import ModelManagerDialog
+from dialogs.prompt_comparison_dialog import PromptComparisonDialog
 from models.image_list_model import ImageListModel
 from utils.big_widgets import TallPushButton
 from utils.enums import CaptionDevice, CaptionPosition
@@ -31,23 +39,8 @@ from utils.settings_widgets import (FocusedScrollSettingsComboBox,
                                     FocusedScrollSettingsSpinBox,
                                     SettingsBigCheckBox, SettingsLineEdit,
                                     SettingsPlainTextEdit)
-from utils.utils import pluralize
+from utils.utils import pluralize, set_text_edit_height
 from widgets.image_list import ImageList
-
-
-def set_text_edit_height(text_edit: QPlainTextEdit, line_count: int):
-    """
-    Set the height of a text edit to the height of a given number of lines.
-    """
-    # From https://stackoverflow.com/a/46997337.
-    document = text_edit.document()
-    font_metrics = QFontMetrics(document.defaultFont())
-    margins = text_edit.contentsMargins()
-    height = int(font_metrics.lineSpacing() * line_count
-                 + margins.top() + margins.bottom()
-                 + document.documentMargin() * 2
-                 + text_edit.frameWidth() * 2)
-    text_edit.setFixedHeight(height)
 
 
 class HorizontalLine(QFrame):
@@ -64,13 +57,16 @@ class CaptionSettingsForm(QVBoxLayout):
         try:
             import bitsandbytes
             self.is_bitsandbytes_available = True
-        except RuntimeError:
+        # `ImportError` when the package is missing, `RuntimeError` when it
+        # is installed but cannot initialize (e.g. no CUDA library found).
+        except (ImportError, RuntimeError):
             self.is_bitsandbytes_available = False
         basic_settings_form = QFormLayout()
         basic_settings_form.setRowWrapPolicy(
             QFormLayout.RowWrapPolicy.WrapAllRows)
         basic_settings_form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        self.basic_settings_form = basic_settings_form
         # `profile_combo_box` is a plain (not settings-backed) combo box
         # because the selected profile itself is transient; applying it
         # updates the individual settings widgets below, which do persist.
@@ -107,6 +103,7 @@ class CaptionSettingsForm(QVBoxLayout):
         self.model_combo_box.setEditable(True)
         self.model_combo_box.addItems(self.get_local_model_paths())
         self.model_combo_box.addItems(get_all_models())
+        self.model_combo_box.addItems([REMOTE_ENDPOINT_MODEL_ID])
         # A `QComboBox`'s default `SizeAdjustPolicy` (`AdjustToContentsOnFirstShow`)
         # locks in a minimum width based on whatever text happens to be
         # current the first time it's shown, and never shrinks back down
@@ -123,9 +120,16 @@ class CaptionSettingsForm(QVBoxLayout):
         model_row_layout.setContentsMargins(0, 0, 0, 0)
         self.manage_models_button = QPushButton('Manage...')
         self.manage_models_button.clicked.connect(self.show_model_manager)
+        self.unload_model_button = QPushButton('Unload Model')
+        self.unload_model_button.setToolTip(
+            'Remove the currently loaded model from memory and free its '
+            'VRAM. It will be loaded again the next time you caption.')
+        self.unload_model_button.setEnabled(False)
+        # (Connected by `AutoCaptioner`, which owns the model cache state.)
         model_row_layout.addWidget(self.model_combo_box)
         model_buttons_layout = QHBoxLayout()
         model_buttons_layout.addWidget(self.manage_models_button)
+        model_buttons_layout.addWidget(self.unload_model_button)
         model_buttons_layout.addStretch()
         model_row_layout.addLayout(model_buttons_layout)
         # A plain (not settings-backed) pair of combo boxes: they only pick
@@ -167,13 +171,46 @@ class CaptionSettingsForm(QVBoxLayout):
             self.prompt_template_insert_button)
         self.prompt_text_edit = SettingsPlainTextEdit(key='prompt')
         set_text_edit_height(self.prompt_text_edit, 4)
+        self.compare_prompts_button = QPushButton('Compare Prompts...')
+        self.compare_prompts_button.setToolTip(
+            'Caption a few selected images with two different prompts '
+            'without applying the captions, to compare their output.')
+        # (Connected by `AutoCaptioner`, which owns the captioning state.)
         self.caption_start_line_edit = SettingsLineEdit(key='caption_start')
         self.caption_start_line_edit.setClearButtonEnabled(True)
         self.caption_position_combo_box = FocusedScrollSettingsComboBox(
             key='caption_position')
         self.caption_position_combo_box.addItems(list(CaptionPosition))
+        # Skip images that already have tags (i.e. were captioned before),
+        # so that resuming an interrupted run is one click instead of
+        # re-filtering the image list by hand.
+        (self.skip_already_captioned_container,
+         self.skip_already_captioned_check_box) = self.create_checkbox_row(
+            'Skip images that already have tags',
+            key='skip_already_captioned', default=False)
+        # Caption only the first N images, then pause and ask whether to
+        # continue - a cheap quality check before committing to hours.
+        self.test_run_image_count_spin_box = FocusedScrollSettingsSpinBox(
+            key='test_run_image_count', default=0, minimum=0, maximum=1000)
         self.device_combo_box = FocusedScrollSettingsComboBox(key='device')
         self.device_combo_box.addItems(list(CaptionDevice))
+        # One-click recommended load/speed settings per model family
+        # (see `load_presets.py`); a plain combo like the prompt-template
+        # and generation-preset pickers - applying it writes to the
+        # individual settings widgets, which are what gets persisted.
+        self.load_preset_combo_box = QComboBox()
+        self.load_preset_combo_box.addItems(list(LOAD_PRESETS.keys()))
+        self.load_preset_combo_box.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.load_preset_combo_box.setMinimumContentsLength(20)
+        self.load_preset_apply_button = QPushButton('Apply Load Preset')
+        self.load_preset_apply_button.clicked.connect(
+            self.apply_load_preset)
+        self.load_preset_row_container = QWidget()
+        load_preset_row_layout = QVBoxLayout(self.load_preset_row_container)
+        load_preset_row_layout.setContentsMargins(0, 0, 0, 0)
+        load_preset_row_layout.addWidget(self.load_preset_combo_box)
+        load_preset_row_layout.addWidget(self.load_preset_apply_button)
         self.load_in_4_bit_container, self.load_in_4_bit_check_box = (
             self.create_checkbox_row('Load in 4-bit', key='load_in_4_bit',
                                      default=True))
@@ -189,6 +226,72 @@ class CaptionSettingsForm(QVBoxLayout):
         self.disable_thinking_container, self.disable_thinking_check_box = (
             self.create_checkbox_row('Disable thinking',
                                      key='disable_thinking', default=False))
+        # The per-image pixel budget (Qwen3-VL family only): every 28x28
+        # pixels becomes one visual token after the model's 2x2 patch merge,
+        # so this directly controls prefill speed and VRAM - and thereby the
+        # batch size that fits. The default of 1.0 MP matches the app's
+        # previous hardcoded 1280 * 28 * 28 max.
+        self.min_image_megapixels_spin_box = (
+            FocusedScrollSettingsDoubleSpinBox(
+                key='min_image_megapixels', default=0.2, minimum=0.01,
+                maximum=32))
+        self.min_image_megapixels_spin_box.setSingleStep(0.05)
+        self.max_image_megapixels_spin_box = (
+            FocusedScrollSettingsDoubleSpinBox(
+                key='max_image_megapixels', default=1.0, minimum=0.01,
+                maximum=32))
+        self.max_image_megapixels_spin_box.setSingleStep(0.05)
+        self.pixel_budget_label = QLabel('')
+        # Keep the minimum below (or equal to) the maximum.
+        self.min_image_megapixels_spin_box.valueChanged.connect(
+            self.max_image_megapixels_spin_box.setMinimum)
+        self.max_image_megapixels_spin_box.valueChanged.connect(
+            self.min_image_megapixels_spin_box.setMaximum)
+        self.max_image_megapixels_spin_box.valueChanged.connect(
+            self.update_pixel_budget_label)
+        self.update_pixel_budget_label()
+        # A container so the rows can be hidden together when a non-Qwen
+        # model is selected (hiding a bare `QFormLayout` field would leave
+        # its row label behind).
+        self.pixel_budget_settings_form_container = QWidget()
+        pixel_budget_form = QFormLayout(
+            self.pixel_budget_settings_form_container)
+        pixel_budget_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        pixel_budget_form.addRow('Min image size (MP)',
+                                 self.min_image_megapixels_spin_box)
+        pixel_budget_form.addRow('Max image size (MP)',
+                                 self.max_image_megapixels_spin_box)
+        pixel_budget_form.addRow('', self.pixel_budget_label)
+        # Settings for the `Remote API (vLLM / SGLang)` pseudo-model, which
+        # sends images to an OpenAI-compatible server instead of loading a
+        # local checkpoint.
+        self.remote_api_settings_form_container = QWidget()
+        remote_api_settings_form = QFormLayout(
+            self.remote_api_settings_form_container)
+        remote_api_settings_form.setRowWrapPolicy(
+            QFormLayout.RowWrapPolicy.WrapAllRows)
+        remote_api_settings_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        self.api_base_url_line_edit = SettingsLineEdit(key='api_base_url')
+        self.api_base_url_line_edit.setClearButtonEnabled(True)
+        self.api_base_url_line_edit.setPlaceholderText(
+            'http://127.0.0.1:8000/v1')
+        self.api_key_line_edit = SettingsLineEdit(key='api_key')
+        self.api_key_line_edit.setClearButtonEnabled(True)
+        self.api_key_line_edit.setEchoMode(
+            QLineEdit.EchoMode.Password)
+        self.api_model_name_line_edit = SettingsLineEdit(
+            key='api_model_name')
+        self.api_model_name_line_edit.setClearButtonEnabled(True)
+        self.api_model_name_line_edit.setPlaceholderText(
+            '(auto-detected from the server)')
+        remote_api_settings_form.addRow('Server URL',
+                                        self.api_base_url_line_edit)
+        remote_api_settings_form.addRow('API key (optional)',
+                                        self.api_key_line_edit)
+        remote_api_settings_form.addRow('Server model name (optional)',
+                                        self.api_model_name_line_edit)
         self.remove_tag_separators_container = QWidget()
         remove_tag_separators_layout = QHBoxLayout(
             self.remove_tag_separators_container)
@@ -206,18 +309,26 @@ class CaptionSettingsForm(QVBoxLayout):
                                    self.prompt_template_row_container)
         self.prompt_label = QLabel('Prompt')
         basic_settings_form.addRow(self.prompt_label, self.prompt_text_edit)
+        basic_settings_form.addRow('', self.compare_prompts_button)
         self.caption_start_label = QLabel('Start caption with')
         basic_settings_form.addRow(self.caption_start_label,
                                    self.caption_start_line_edit)
         basic_settings_form.addRow('Caption position',
                                    self.caption_position_combo_box)
+        basic_settings_form.addRow(
+            self.skip_already_captioned_container)
+        basic_settings_form.addRow('Test run (0 = off)',
+                                   self.test_run_image_count_spin_box)
         self.device_label = QLabel('Device')
         basic_settings_form.addRow(self.device_label, self.device_combo_box)
+        basic_settings_form.addRow('Load preset',
+                                   self.load_preset_row_container)
         basic_settings_form.addRow(self.load_in_4_bit_container)
         basic_settings_form.addRow(self.load_in_8_bit_container)
         basic_settings_form.addRow(self.cpu_offload_container)
         basic_settings_form.addRow(self.sage_attention_container)
         basic_settings_form.addRow(self.disable_thinking_container)
+        basic_settings_form.addRow(self.pixel_budget_settings_form_container)
         basic_settings_form.addRow(self.remove_tag_separators_container)
 
         self.wd_tagger_settings_form_container = QWidget()
@@ -261,6 +372,7 @@ class CaptionSettingsForm(QVBoxLayout):
         self.advanced_settings_form_container = QWidget()
         advanced_settings_form = QFormLayout(
             self.advanced_settings_form_container)
+        self.advanced_settings_form = advanced_settings_form
         advanced_settings_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         advanced_settings_form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
@@ -304,6 +416,20 @@ class CaptionSettingsForm(QVBoxLayout):
             key='no_repeat_ngram_size', default=3, minimum=0, maximum=5)
         self.gpu_index_spin_box = FocusedScrollSettingsSpinBox(
             key='gpu_index', default=0, minimum=0, maximum=9)
+        # How many images to caption per `generate()` call for models that
+        # support it (the Qwen3-VL family), or how many requests to have in
+        # flight at once for the remote-endpoint model.
+        self.batch_size_spin_box = FocusedScrollSettingsSpinBox(
+            key='batch_size', default=1, minimum=1, maximum=64)
+        self.attention_implementation_combo_box = (
+            FocusedScrollSettingsComboBox(key='attention_implementation'))
+        self.attention_implementation_combo_box.addItems(
+            list(ATTENTION_IMPLEMENTATIONS.keys()))
+        # How many GPUs to caption on at once when the device is
+        # `Multiple GPUs (parallel)`: one model instance per GPU, with the
+        # selected images split round-robin between them.
+        self.parallel_gpu_count_spin_box = FocusedScrollSettingsSpinBox(
+            key='parallel_gpu_count', default=2, minimum=2, maximum=8)
         # A plain (not settings-backed) combo box: it only picks which
         # preset to apply to the generation parameter widgets below, which
         # are themselves what gets persisted.
@@ -347,11 +473,28 @@ class CaptionSettingsForm(QVBoxLayout):
         advanced_settings_form.addRow('No repeat n-gram size',
                                       self.no_repeat_ngram_size_spin_box)
         advanced_settings_form.addRow(HorizontalLine())
+        advanced_settings_form.addRow('Batch size',
+                                      self.batch_size_spin_box)
+        advanced_settings_form.addRow('Attention implementation',
+                                      self.attention_implementation_combo_box)
+        advanced_settings_form.addRow('Parallel GPU count',
+                                      self.parallel_gpu_count_spin_box)
+        self.torch_compile_container, self.torch_compile_check_box = (
+            self.create_checkbox_row(
+                'Compile model (torch.compile, experimental)',
+                key='torch_compile', default=False))
+        advanced_settings_form.addRow(self.torch_compile_container)
+        (self.quantize_kv_cache_container,
+         self.quantize_kv_cache_check_box) = self.create_checkbox_row(
+            'Quantize KV cache (fp8)', key='quantize_kv_cache', default=False)
+        advanced_settings_form.addRow(self.quantize_kv_cache_container)
+        advanced_settings_form.addRow(HorizontalLine())
         advanced_settings_form.addRow('GPU index', self.gpu_index_spin_box)
         self.advanced_settings_form_container.hide()
 
         self.addLayout(basic_settings_form)
         self.addWidget(self.wd_tagger_settings_form_container)
+        self.addWidget(self.remote_api_settings_form_container)
         self.horizontal_line = HorizontalLine()
         self.addWidget(self.horizontal_line)
         self.addWidget(self.toggle_advanced_settings_form_button)
@@ -463,10 +606,19 @@ class CaptionSettingsForm(QVBoxLayout):
         self.caption_position_combo_box.setCurrentText(
             caption_settings.get('caption_position',
                                  current['caption_position']))
+        self.skip_already_captioned_check_box.setChecked(
+            caption_settings.get('skip_already_captioned',
+                                 current['skip_already_captioned']))
+        self.test_run_image_count_spin_box.setValue(
+            caption_settings.get('test_run_image_count',
+                                 current['test_run_image_count']))
         self.device_combo_box.setCurrentText(
             caption_settings.get('device', current['device']))
         self.gpu_index_spin_box.setValue(
             caption_settings.get('gpu_index', current['gpu_index']))
+        self.parallel_gpu_count_spin_box.setValue(
+            caption_settings.get('parallel_gpu_count',
+                                 current['parallel_gpu_count']))
         self.load_in_4_bit_check_box.setChecked(
             caption_settings.get('load_in_4_bit', current['load_in_4_bit']))
         self.load_in_8_bit_check_box.setChecked(
@@ -478,6 +630,29 @@ class CaptionSettingsForm(QVBoxLayout):
         self.disable_thinking_check_box.setChecked(
             caption_settings.get('disable_thinking',
                                  current['disable_thinking']))
+        self.min_image_megapixels_spin_box.setValue(
+            caption_settings.get('min_image_megapixels',
+                                 current['min_image_megapixels']))
+        self.max_image_megapixels_spin_box.setValue(
+            caption_settings.get('max_image_megapixels',
+                                 current['max_image_megapixels']))
+        self.api_base_url_line_edit.setText(
+            caption_settings.get('api_base_url', current['api_base_url']))
+        self.api_key_line_edit.setText(
+            caption_settings.get('api_key', current['api_key']))
+        self.api_model_name_line_edit.setText(
+            caption_settings.get('api_model_name',
+                                 current['api_model_name']))
+        self.batch_size_spin_box.setValue(
+            caption_settings.get('batch_size', current['batch_size']))
+        self.attention_implementation_combo_box.setCurrentText(
+            caption_settings.get('attention_implementation',
+                                 current['attention_implementation']))
+        self.torch_compile_check_box.setChecked(
+            caption_settings.get('torch_compile', current['torch_compile']))
+        self.quantize_kv_cache_check_box.setChecked(
+            caption_settings.get('quantize_kv_cache',
+                                 current['quantize_kv_cache']))
         self.wd_tagger_load_in_8_bit_check_box.setChecked(
             caption_settings.get('wd_tagger_load_in_8_bit',
                                  current['wd_tagger_load_in_8_bit']))
@@ -526,6 +701,15 @@ class CaptionSettingsForm(QVBoxLayout):
         return container, check_box
 
     @Slot()
+    def update_pixel_budget_label(self):
+        pixels_per_megapixel = 1_000_000
+        max_pixels = (self.max_image_megapixels_spin_box.value()
+                      * pixels_per_megapixel)
+        visual_tokens = round(max_pixels / PIXELS_PER_VISUAL_TOKEN)
+        self.pixel_budget_label.setText(
+            f'Up to about {visual_tokens} visual tokens per image')
+
+    @Slot()
     def insert_prompt_template(self):
         model = self.prompt_template_model_combo_box.currentText()
         purpose = self.prompt_template_purpose_combo_box.currentText()
@@ -552,6 +736,40 @@ class CaptionSettingsForm(QVBoxLayout):
             preset['repetition_penalty'])
         self.no_repeat_ngram_size_spin_box.setValue(
             preset['no_repeat_ngram_size'])
+
+    @Slot()
+    def apply_load_preset(self):
+        preset = LOAD_PRESETS[self.load_preset_combo_box.currentText()]
+        if 'load_in_4_bit' in preset:
+            self.load_in_4_bit_check_box.setChecked(preset['load_in_4_bit'])
+        if 'load_in_8_bit' in preset:
+            self.load_in_8_bit_check_box.setChecked(preset['load_in_8_bit'])
+        if 'cpu_offload' in preset:
+            self.cpu_offload_check_box.setChecked(preset['cpu_offload'])
+        if 'sage_attention' in preset:
+            self.sage_attention_check_box.setChecked(preset['sage_attention'])
+        if 'disable_thinking' in preset:
+            self.disable_thinking_check_box.setChecked(
+                preset['disable_thinking'])
+        if 'wd_tagger_load_in_8_bit' in preset:
+            self.wd_tagger_load_in_8_bit_check_box.setChecked(
+                preset['wd_tagger_load_in_8_bit'])
+        if 'attention_implementation' in preset:
+            self.attention_implementation_combo_box.setCurrentText(
+                preset['attention_implementation'])
+        if 'torch_compile' in preset:
+            self.torch_compile_check_box.setChecked(preset['torch_compile'])
+        if 'quantize_kv_cache' in preset:
+            self.quantize_kv_cache_check_box.setChecked(
+                preset['quantize_kv_cache'])
+        if 'batch_size' in preset:
+            self.batch_size_spin_box.setValue(preset['batch_size'])
+        if 'min_image_megapixels' in preset:
+            self.min_image_megapixels_spin_box.setValue(
+                preset['min_image_megapixels'])
+        if 'max_image_megapixels' in preset:
+            self.max_image_megapixels_spin_box.setValue(
+                preset['max_image_megapixels'])
 
     @Slot()
     def show_model_manager(self):
@@ -586,35 +804,61 @@ class CaptionSettingsForm(QVBoxLayout):
 
     @Slot(str)
     def show_settings_for_model(self, model_id: str):
-        wd_tagger_widgets = [self.wd_tagger_settings_form_container]
-        non_wd_tagger_widgets = [
-            self.prompt_label,
-            self.prompt_text_edit,
-            self.caption_start_label,
-            self.caption_start_line_edit,
-            self.device_label,
-            self.device_combo_box,
-            self.load_in_4_bit_container,
-            self.load_in_8_bit_container,
-            self.cpu_offload_container,
-            self.sage_attention_container,
-            self.remove_tag_separators_container,
-            self.horizontal_line,
-            self.toggle_advanced_settings_form_button,
-            self.advanced_settings_form_container
-        ]
         is_wd_tagger_model = get_model_class(model_id) == WdTagger
-        for widget in wd_tagger_widgets:
-            widget.setVisible(is_wd_tagger_model)
-        for widget in non_wd_tagger_widgets:
-            widget.setVisible(not is_wd_tagger_model)
-        # Only the Qwen3-VL family's chat template reads `disable_thinking`
-        # (see `Qwen3VL.format_prompt()`); hide the checkbox for every other
-        # model instead of leaving a setting on screen that does nothing.
+        is_remote_api_model = is_remote_endpoint_model(model_id)
         is_qwen3_vl_family_model = issubclass(get_model_class(model_id),
                                               Qwen3VL)
-        self.disable_thinking_container.setVisible(
-            not is_wd_tagger_model and is_qwen3_vl_family_model)
+        # (visible, widget) per widget, computed for the selected model.
+        visibility = [
+            (is_wd_tagger_model, self.wd_tagger_settings_form_container),
+            (is_remote_api_model, self.remote_api_settings_form_container),
+            (not is_wd_tagger_model and not is_remote_api_model,
+             self.prompt_label),
+            (not is_wd_tagger_model and not is_remote_api_model,
+             self.prompt_text_edit),
+            (not is_wd_tagger_model and not is_remote_api_model,
+             self.caption_start_label),
+            (not is_wd_tagger_model and not is_remote_api_model,
+             self.caption_start_line_edit),
+            (not is_wd_tagger_model and not is_remote_api_model,
+             self.device_label),
+            (not is_wd_tagger_model and not is_remote_api_model,
+             self.device_combo_box),
+            (not is_wd_tagger_model and not is_remote_api_model,
+             self.load_in_4_bit_container),
+            (not is_wd_tagger_model and not is_remote_api_model,
+             self.load_in_8_bit_container),
+            (not is_wd_tagger_model and not is_remote_api_model,
+             self.cpu_offload_container),
+            (not is_wd_tagger_model and not is_remote_api_model,
+             self.sage_attention_container),
+            # Only the Qwen3-VL family's chat template reads
+            # `disable_thinking` (see `Qwen3VL.format_prompt()`); hide the
+            # checkbox for every other model instead of leaving a setting on
+            # screen that does nothing.
+            (not is_wd_tagger_model and is_qwen3_vl_family_model,
+             self.disable_thinking_container),
+            # The pixel budget is applied per call by the Qwen3-VL family
+            # (`Qwen3VL.get_size_kwargs()`); other models have their own
+            # fixed preprocessing.
+            (not is_wd_tagger_model and is_qwen3_vl_family_model,
+             self.pixel_budget_settings_form_container),
+            (not is_wd_tagger_model, self.remove_tag_separators_container),
+            (not is_wd_tagger_model, self.compare_prompts_button),
+            (not is_wd_tagger_model,
+             self.skip_already_captioned_container),
+            (not is_wd_tagger_model, self.test_run_image_count_spin_box),
+            (not is_wd_tagger_model, self.load_preset_row_container),
+            (not is_wd_tagger_model, self.horizontal_line),
+            (not is_wd_tagger_model,
+             self.toggle_advanced_settings_form_button),
+            (not is_wd_tagger_model, self.advanced_settings_form_container)
+        ]
+        for is_visible, widget in visibility:
+            widget.setVisible(is_visible)
+        test_run_label = (self.basic_settings_form.labelForField(
+            self.test_run_image_count_spin_box))
+        test_run_label.setVisible(not is_wd_tagger_model)
         self.set_quantization_options_visibility(
             self.device_combo_box.currentText())
 
@@ -622,21 +866,38 @@ class CaptionSettingsForm(QVBoxLayout):
     def set_quantization_options_visibility(self, device: str):
         model_id = self.model_combo_box.currentText()
         is_wd_tagger_model = get_model_class(model_id) == WdTagger
-        is_gpu_device = device == CaptionDevice.GPU
-        if is_wd_tagger_model:
+        is_remote_api_model = is_remote_endpoint_model(model_id)
+        is_gpu_device = device in (CaptionDevice.GPU,
+                                   CaptionDevice.GPUS_PARALLEL)
+        if is_wd_tagger_model or is_remote_api_model:
             self.load_in_4_bit_container.setVisible(False)
             self.load_in_8_bit_container.setVisible(False)
             self.cpu_offload_container.setVisible(False)
             self.sage_attention_container.setVisible(False)
+            self.torch_compile_container.setVisible(False)
+            self.quantize_kv_cache_container.setVisible(False)
+            self.attention_implementation_combo_box.setVisible(False)
+            attention_label = (self.advanced_settings_form.labelForField(
+                self.attention_implementation_combo_box))
+            attention_label.setVisible(False)
             return
         is_load_in_4_bit_available = (self.is_bitsandbytes_available
                                       and is_gpu_device)
         self.load_in_4_bit_container.setVisible(is_load_in_4_bit_available)
-        is_load_in_8_bit_available = (self.is_bitsandbytes_available
-                                      and is_gpu_device)
-        self.load_in_8_bit_container.setVisible(is_load_in_8_bit_available)
+        self.load_in_8_bit_container.setVisible(is_load_in_4_bit_available)
         self.cpu_offload_container.setVisible(is_gpu_device)
         self.sage_attention_container.setVisible(is_gpu_device)
+        self.torch_compile_container.setVisible(is_gpu_device)
+        self.quantize_kv_cache_container.setVisible(is_gpu_device)
+        self.attention_implementation_combo_box.setVisible(is_gpu_device)
+        attention_label = (self.advanced_settings_form.labelForField(
+            self.attention_implementation_combo_box))
+        attention_label.setVisible(is_gpu_device)
+        is_parallel_device = device == CaptionDevice.GPUS_PARALLEL
+        self.parallel_gpu_count_spin_box.setVisible(is_parallel_device)
+        parallel_gpu_label = (self.advanced_settings_form.labelForField(
+            self.parallel_gpu_count_spin_box))
+        parallel_gpu_label.setVisible(is_parallel_device)
 
     @Slot()
     def toggle_advanced_settings_form(self):
@@ -655,13 +916,31 @@ class CaptionSettingsForm(QVBoxLayout):
             'prompt': self.prompt_text_edit.toPlainText(),
             'caption_start': self.caption_start_line_edit.text(),
             'caption_position': self.caption_position_combo_box.currentText(),
+            'skip_already_captioned':
+                self.skip_already_captioned_check_box.isChecked(),
+            'test_run_image_count':
+                self.test_run_image_count_spin_box.value(),
             'device': self.device_combo_box.currentText(),
             'gpu_index': self.gpu_index_spin_box.value(),
+            'parallel_gpu_count': self.parallel_gpu_count_spin_box.value(),
             'load_in_4_bit': self.load_in_4_bit_check_box.isChecked(),
             'load_in_8_bit': self.load_in_8_bit_check_box.isChecked(),
             'cpu_offload': self.cpu_offload_check_box.isChecked(),
             'sage_attention': self.sage_attention_check_box.isChecked(),
             'disable_thinking': self.disable_thinking_check_box.isChecked(),
+            'min_image_megapixels':
+                self.min_image_megapixels_spin_box.value(),
+            'max_image_megapixels':
+                self.max_image_megapixels_spin_box.value(),
+            'api_base_url': self.api_base_url_line_edit.text(),
+            'api_key': self.api_key_line_edit.text(),
+            'api_model_name': self.api_model_name_line_edit.text(),
+            'batch_size': self.batch_size_spin_box.value(),
+            'attention_implementation':
+                self.attention_implementation_combo_box.currentText(),
+            'torch_compile': self.torch_compile_check_box.isChecked(),
+            'quantize_kv_cache':
+                self.quantize_kv_cache_check_box.isChecked(),
             'wd_tagger_load_in_8_bit':
                 self.wd_tagger_load_in_8_bit_check_box.isChecked(),
             'remove_tag_separators':
@@ -717,6 +996,8 @@ class AutoCaptioner(QDockWidget):
         self.is_model_loaded_in_8_bit = None
         self.is_model_cpu_offloaded = None
         self.is_model_using_sage_attention = None
+        self.is_model_torch_compiled = None
+        self.is_model_attention_implementation = None
         self.is_wd_tagger_loaded_in_8_bit = None
         # Whether the last block of text in the console text edit should be
         # replaced with the next block of text that is outputted.
@@ -743,6 +1024,12 @@ class AutoCaptioner(QDockWidget):
         layout.addWidget(self.console_text_edit)
         self.caption_settings_form = CaptionSettingsForm()
         layout.addLayout(self.caption_settings_form)
+        # The unload/compare buttons live in the form (for layout), but
+        # their actions use this widget's captioning/model-cache state.
+        self.caption_settings_form.unload_model_button.clicked.connect(
+            self.unload_model)
+        self.caption_settings_form.compare_prompts_button.clicked.connect(
+            self.compare_prompts)
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setSizeAdjustPolicy(
@@ -750,6 +1037,94 @@ class AutoCaptioner(QDockWidget):
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         scroll_area.setWidget(container)
         self.setWidget(scroll_area)
+
+    @Slot()
+    def unload_model(self):
+        if self.is_captioning or self.model is None:
+            return
+        # Drop the widget-level model cache (the single-GPU path); a
+        # parallel multi-GPU run's models live in per-device holders that
+        # are freed when their run finishes.
+        self.processor = None
+        self.model = None
+        self.model_id = None
+        self.model_device_type = None
+        self.is_model_loaded_in_4_bit = None
+        self.is_model_loaded_in_8_bit = None
+        self.is_model_cpu_offloaded = None
+        self.is_model_using_sage_attention = None
+        self.is_model_torch_compiled = None
+        self.is_model_attention_implementation = None
+        self.is_wd_tagger_loaded_in_8_bit = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        self.caption_settings_form.unload_model_button.setEnabled(False)
+        QMessageBox.information(
+            None, 'Model Unloaded',
+            'The loaded model was removed from memory and its VRAM was '
+            'freed. It will be loaded again the next time you caption.')
+
+    @Slot()
+    def compare_prompts(self):
+        if self.is_captioning:
+            QMessageBox.warning(
+                self, 'Auto-Captioner Busy',
+                'Captioning is already running. Wait for it to finish '
+                'before comparing prompts.')
+            return
+        dialog = PromptComparisonDialog(self)
+        dialog.exec()
+
+    @Slot(int)
+    def show_pilot_run_prompt(self, image_count: int):
+        """
+        Test-run prompt: shown (non-modal, so the user can review the
+        captions in the main window first) after the first N images of a
+        run; the thread pauses until a button is pressed.
+        """
+        message_box = QMessageBox(self)
+        message_box.setWindowTitle('Test Run Finished')
+        message_box.setText(
+            f'{image_count} image(s) captioned. The captions are already '
+            f'applied to their tags - review them in the image list, then '
+            f'choose whether to continue with the remaining images.')
+        continue_button = message_box.addButton(
+            'Continue captioning', QMessageBox.ButtonRole.YesRole)
+        stop_button = message_box.addButton(
+            'Stop here', QMessageBox.ButtonRole.NoRole)
+        message_box.setWindowModality(Qt.WindowModality.NonModal)
+
+        def finish_pilot_run():
+            clicked_button = message_box.clickedButton()
+            self.captioning_thread.continue_after_pilot = (
+                clicked_button is continue_button)
+            message_box.deleteLater()
+
+        message_box.finished.connect(finish_pilot_run)
+        self.pilot_message_box = message_box
+        message_box.show()
+        message_box.raise_()
+
+    @Slot()
+    def offer_failed_image_selection(self):
+        """
+        After a run with failures, offer to select the failed images in the
+        image list, so retrying them is just pressing Start again.
+        """
+        thread = self.captioning_thread
+        failed_image_indices = getattr(thread, 'failed_image_indices', [])
+        if not failed_image_indices:
+            return
+        failed_count = len(failed_image_indices)
+        reply = QMessageBox.question(
+            None, 'Captioning Failures',
+            f'{failed_count} {pluralize("image", failed_count)} failed '
+            f'during captioning (see the Auto-Captioner console for the '
+            f'errors). Select them in the image list so you can retry '
+            f'just them?')
+        if reply == QMessageBox.StandardButton.Yes:
+            self.image_list.select_image_indices(failed_image_indices)
 
         self.start_cancel_button.clicked.connect(
             self.start_or_cancel_captioning)
@@ -824,6 +1199,7 @@ class AutoCaptioner(QDockWidget):
             show_alert_when_finished = (confirmation_dialog
                                         .show_alert_check_box.isChecked())
         self.set_is_captioning(True)
+        self.caption_settings_form.unload_model_button.setEnabled(False)
         caption_settings = self.caption_settings_form.get_caption_settings()
         if caption_settings['caption_position'] != CaptionPosition.DO_NOT_ADD:
             self.image_list_model.add_to_undo_stack(
@@ -851,6 +1227,17 @@ class AutoCaptioner(QDockWidget):
             self.caption_generated)
         self.captioning_thread.progress_bar_update_requested.connect(
             self.progress_bar.setValue)
+        self.captioning_thread.progress_bar_range_update_requested.connect(
+            self.progress_bar.setMaximum)
+        self.captioning_thread.progress_bar_format_update_requested.connect(
+            self.progress_bar.setFormat)
+        self.captioning_thread.pilot_run_finished_requested.connect(
+            self.show_pilot_run_prompt)
+        self.captioning_thread.finished.connect(
+            self.offer_failed_image_selection)
+        self.captioning_thread.finished.connect(
+            lambda: self.caption_settings_form.unload_model_button
+            .setEnabled(self.model is not None))
         self.captioning_thread.finished.connect(
             lambda: self.set_is_captioning(False))
         self.captioning_thread.finished.connect(restore_stdout_and_stderr)
