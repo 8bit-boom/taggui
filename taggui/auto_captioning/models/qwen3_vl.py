@@ -69,27 +69,30 @@ class Qwen3VL(AutoCaptioningModel):
     def get_input_text(self, image_prompt: str) -> str:
         return image_prompt + self.caption_start
 
-    @staticmethod
-    def postprocess_image_prompt(image_prompt: str) -> str:
-        # The chat-templated prompt still contains the literal text of
-        # special tokens (role markers and the image placeholder), but
-        # `get_caption_from_generated_tokens` decodes the generated text
-        # with `skip_special_tokens=True`, which drops them. Strip them
-        # here too so the two strings line up and the prompt (rather than
-        # only the model's actual reply) doesn't leak into the caption.
-        special_tokens = ['<|im_start|>', '<|im_end|>', '<|vision_start|>',
-                          '<|vision_end|>', '<|image_pad|>']
-        for special_token in special_tokens:
-            image_prompt = image_prompt.replace(special_token, '')
-        return image_prompt
-
     def get_model_inputs(self, image_prompt: str, image: Image):
         text = self.get_input_text(image_prompt)
         pil_image = self.load_image(image)
         model_inputs = (self.processor(text=text, images=pil_image,
                                        return_tensors='pt')
                         .to(self.device, **self.dtype_argument))
+        # Stashed so `get_caption_from_generated_tokens` below can slice off
+        # the input tokens before decoding, instead of string-matching the
+        # templated prompt against the decoded text. The latter requires
+        # knowing every special token's literal text to strip (so it lines
+        # up with a `skip_special_tokens=True` decode), which is fragile:
+        # Qwen3.5's tokenizer uses a completely different special-token ID
+        # range than Qwen3-VL's (e.g. its image token is 248056, not
+        # Qwen3-VL's 151655), silently breaking a hardcoded token list
+        # written against one of them. Slicing by input length doesn't
+        # depend on knowing any of that.
+        self.input_token_count = model_inputs['input_ids'].shape[-1]
         return model_inputs
+
+    def get_caption_from_generated_tokens(
+            self, generated_token_ids: torch.Tensor, image_prompt: str) -> str:
+        generated_token_ids = generated_token_ids[:, self.input_token_count:]
+        return super().get_caption_from_generated_tokens(generated_token_ids,
+                                                          image_prompt)
 
     @staticmethod
     def postprocess_generated_text(generated_text: str) -> str:
