@@ -20,7 +20,7 @@ from utils.image import Image
 MIN_PIXELS = 256 * 28 * 28
 MAX_PIXELS = 1280 * 28 * 28
 
-THINK_BLOCK_PATTERN = re.compile(r'<think>.*?</think>', re.DOTALL)
+THINK_BLOCK_PATTERN = re.compile(r'(?:<think>)?.*?</think>\s*', re.DOTALL)
 
 
 class Qwen3VL(AutoCaptioningModel):
@@ -97,5 +97,12 @@ class Qwen3VL(AutoCaptioningModel):
     @staticmethod
     def postprocess_generated_text(generated_text: str) -> str:
         # Qwen3-VL's reasoning models may emit a `<think>...</think>` block
-        # before the actual caption. Strip it out.
+        # before the actual caption. Strip it out. The opening `<think>` is
+        # usually forced by the chat template as part of the generation
+        # prompt rather than actually generated, so by the time this runs
+        # `generated_text` (already sliced to just the newly generated
+        # tokens in `get_caption_from_generated_tokens` above) often starts
+        # mid-reasoning with no opening tag at all - only the closing
+        # `</think>`. The pattern below matches that case too, not just a
+        # self-contained `<think>...</think>` pair.
         return THINK_BLOCK_PATTERN.sub('', generated_text).strip()

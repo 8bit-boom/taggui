@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QAbstractScrollArea, QComboBox, QDockWidget,
 from auto_captioning.caption_profiles import (get_caption_profiles,
                                               save_caption_profiles)
 from auto_captioning.captioning_thread import CaptioningThread
+from auto_captioning.generation_presets import GENERATION_PRESETS
 from auto_captioning.prompt_templates import (CAPTIONER_PROMPT_SUFFIXES,
                                               PROMPT_TEMPLATE_CAPTIONERS,
                                               PROMPT_TEMPLATE_PURPOSES,
@@ -298,7 +299,29 @@ class CaptionSettingsForm(QVBoxLayout):
             key='no_repeat_ngram_size', default=3, minimum=0, maximum=5)
         self.gpu_index_spin_box = FocusedScrollSettingsSpinBox(
             key='gpu_index', default=0, minimum=0, maximum=9)
+        # A plain (not settings-backed) combo box: it only picks which
+        # preset to apply to the generation parameter widgets below, which
+        # are themselves what gets persisted.
+        self.generation_preset_combo_box = QComboBox()
+        self.generation_preset_combo_box.addItems(
+            list(GENERATION_PRESETS.keys()))
+        self.generation_preset_combo_box.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.generation_preset_combo_box.setMinimumContentsLength(20)
+        self.generation_preset_apply_button = QPushButton('Apply Preset')
+        self.generation_preset_apply_button.clicked.connect(
+            self.apply_generation_preset)
+        self.generation_preset_row_container = QWidget()
+        generation_preset_row_layout = QVBoxLayout(
+            self.generation_preset_row_container)
+        generation_preset_row_layout.setContentsMargins(0, 0, 0, 0)
+        generation_preset_row_layout.addWidget(
+            self.generation_preset_combo_box)
+        generation_preset_row_layout.addWidget(
+            self.generation_preset_apply_button)
         advanced_settings_form.addRow(bad_forced_words_form)
+        advanced_settings_form.addRow('Generation preset',
+                                      self.generation_preset_row_container)
         advanced_settings_form.addRow(HorizontalLine())
         advanced_settings_form.addRow('Minimum tokens',
                                       self.min_new_token_count_spin_box)
@@ -504,6 +527,23 @@ class CaptionSettingsForm(QVBoxLayout):
         if captioner_suffix:
             template = f'{template} {captioner_suffix}'
         self.prompt_text_edit.setPlainText(template)
+
+    @Slot()
+    def apply_generation_preset(self):
+        captioner = self.generation_preset_combo_box.currentText()
+        preset = GENERATION_PRESETS[captioner]
+        self.min_new_token_count_spin_box.setValue(preset['min_new_tokens'])
+        self.max_new_token_count_spin_box.setValue(preset['max_new_tokens'])
+        self.beam_count_spin_box.setValue(preset['num_beams'])
+        self.length_penalty_spin_box.setValue(preset['length_penalty'])
+        self.use_sampling_check_box.setChecked(preset['do_sample'])
+        self.temperature_spin_box.setValue(preset['temperature'])
+        self.top_k_spin_box.setValue(preset['top_k'])
+        self.top_p_spin_box.setValue(preset['top_p'])
+        self.repetition_penalty_spin_box.setValue(
+            preset['repetition_penalty'])
+        self.no_repeat_ngram_size_spin_box.setValue(
+            preset['no_repeat_ngram_size'])
 
     @Slot()
     def show_model_manager(self):
