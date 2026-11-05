@@ -81,3 +81,17 @@ def test_get_all_models_prepends_user_models(isolated_settings):
     all_models = get_all_models()
     assert all_models[0] == 'my-org/my-model'
     assert 'microsoft/Florence-2-large-ft' in all_models
+
+
+def test_wd_tagger_does_not_support_torch_compile():
+    # Regression test: `torch.compile` used to be applied to the WD
+    # tagger's ONNX-session wrapper and crashed with an AssertionError.
+    # The model class must opt out (the Advanced-settings checkbox is
+    # hidden for it, but a persisted setting from another model would
+    # still apply).
+    import auto_captioning.models.wd_tagger as wd_tagger_module
+
+    assert wd_tagger_module.WdTagger.supports_torch_compile is False
+    from auto_captioning.auto_captioning_model import AutoCaptioningModel
+
+    assert AutoCaptioningModel.supports_torch_compile is True

@@ -135,6 +135,10 @@ class AutoCaptioningModel:
     # sending concurrent requests (see `is_remote_endpoint`).
     supports_batching = False
     is_remote_endpoint = False
+    # Whether `torch.compile` can wrap this model's `model` object. False
+    # for models whose "model" is not a torch module at all (the WD
+    # tagger wraps an ONNX Runtime session); compiling those crashes.
+    supports_torch_compile = True
 
     def __init__(self,
                  captioning_thread_: 'captioning_thread.CaptioningThread',
@@ -430,11 +434,17 @@ class AutoCaptioningModel:
         self.thread_parent.processor = self.processor
         self.model = self.get_model()
         if self.torch_compile and self.device.type == 'cuda':
-            print('Compiling the model with torch.compile (the first run '
-                  'will be slower while it compiles)...')
-            # `dynamic=True` avoids recompiling for every distinct image
-            # resolution and sequence length.
-            self.model = torch.compile(self.model, dynamic=True)
+            if self.supports_torch_compile:
+                print('Compiling the model with torch.compile (the first '
+                      'run will be slower while it compiles)...')
+                # `dynamic=True` avoids recompiling for every distinct
+                # image resolution and sequence length.
+                self.model = torch.compile(self.model, dynamic=True)
+            else:
+                # The checkbox is hidden for this model, but a persisted
+                # setting from a previous model would still apply here.
+                print('torch.compile does not apply to this model; '
+                      'skipping it.')
         self.thread_parent.model = self.model
         self.warmup()
         self.thread_parent.model_id = self.model_id
