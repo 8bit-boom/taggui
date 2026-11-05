@@ -1038,6 +1038,9 @@ class AutoCaptioner(QDockWidget):
         scroll_area.setWidget(container)
         self.setWidget(scroll_area)
 
+        self.start_cancel_button.clicked.connect(
+            self.start_or_cancel_captioning)
+
     @Slot()
     def unload_model(self):
         if self.is_captioning or self.model is None:
@@ -1125,9 +1128,6 @@ class AutoCaptioner(QDockWidget):
             f'just them?')
         if reply == QMessageBox.StandardButton.Yes:
             self.image_list.select_image_indices(failed_image_indices)
-
-        self.start_cancel_button.clicked.connect(
-            self.start_or_cancel_captioning)
 
     @Slot()
     def start_or_cancel_captioning(self):
