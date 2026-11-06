@@ -57,6 +57,32 @@ class HorizontalLine(QFrame):
         self.setFrameShadow(QFrame.Shadow.Raised)
 
 
+def create_help_label(tooltip: str) -> QLabel:
+    """
+    A small "?" label that shows `tooltip` on hover, for appending next to
+    a setting's name to explain what it does.
+    """
+    help_label = QLabel('(?)')
+    help_label.setToolTip(tooltip)
+    help_label.setStyleSheet('color: palette(link);')
+    help_label.setCursor(Qt.CursorShape.WhatsThisCursor)
+    return help_label
+
+
+def label_with_help(text: str, tooltip: str) -> QWidget:
+    """
+    A form-row label: `text` followed by a help icon that shows `tooltip`
+    on hover.
+    """
+    container = QWidget()
+    layout = QHBoxLayout(container)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(4)
+    layout.addWidget(QLabel(text))
+    layout.addWidget(create_help_label(tooltip))
+    return container
+
+
 class CaptionSettingsForm(QVBoxLayout):
     def __init__(self):
         super().__init__()
@@ -100,7 +126,12 @@ class CaptionSettingsForm(QVBoxLayout):
         profile_buttons_layout.addWidget(self.profile_save_button)
         profile_buttons_layout.addWidget(self.profile_delete_button)
         profile_row_layout.addLayout(profile_buttons_layout)
-        basic_settings_form.addRow('Profile', self.profile_row_container)
+        basic_settings_form.addRow(
+            label_with_help(
+                'Profile',
+                'Save or load a full snapshot of every setting on this '
+                'form.'),
+            self.profile_row_container)
         self.model_combo_box = FocusedScrollSettingsComboBox(key='model_id')
         # `setEditable()` must be called before `addItems()` to preserve any
         # custom model that was set.
@@ -175,20 +206,37 @@ class CaptionSettingsForm(QVBoxLayout):
         self.device_combo_box = FocusedScrollSettingsComboBox(key='device')
         self.device_combo_box.addItems(list(CaptionDevice))
         self.load_in_4_bit_container, self.load_in_4_bit_check_box = (
-            self.create_checkbox_row('Load in 4-bit', key='load_in_4_bit',
-                                     default=True))
+            self.create_checkbox_row(
+                'Load in 4-bit', key='load_in_4_bit', default=True,
+                tooltip='Load the model with 4-bit quantization to use '
+                       'much less VRAM, at some cost to caption quality. '
+                       'Requires a compatible GPU.'))
         self.load_in_8_bit_container, self.load_in_8_bit_check_box = (
-            self.create_checkbox_row('Load in 8-bit', key='load_in_8_bit',
-                                     default=False))
+            self.create_checkbox_row(
+                'Load in 8-bit', key='load_in_8_bit', default=False,
+                tooltip='Load the model with 8-bit quantization to use '
+                       'less VRAM than 4-bit, at a smaller cost to '
+                       'caption quality. Requires a compatible GPU.'))
         self.cpu_offload_container, self.cpu_offload_check_box = (
-            self.create_checkbox_row('CPU offload', key='cpu_offload',
-                                     default=False))
+            self.create_checkbox_row(
+                'CPU offload', key='cpu_offload', default=False,
+                tooltip='Automatically move parts of the model between '
+                       'GPU and CPU memory to fit one too large for the '
+                       'GPU alone. Slower than keeping everything on '
+                       'the GPU.'))
         self.sage_attention_container, self.sage_attention_check_box = (
-            self.create_checkbox_row('Use SageAttention',
-                                     key='sage_attention', default=False))
+            self.create_checkbox_row(
+                'Use SageAttention', key='sage_attention', default=False,
+                tooltip='Use the SageAttention library\'s faster '
+                       'attention implementation. Requires the '
+                       'sageattention package and a compatible model '
+                       'and GPU.'))
         self.disable_thinking_container, self.disable_thinking_check_box = (
-            self.create_checkbox_row('Disable thinking',
-                                     key='disable_thinking', default=False))
+            self.create_checkbox_row(
+                'Disable thinking', key='disable_thinking', default=False,
+                tooltip='Turn off this model\'s reasoning/thinking step, '
+                       'if it supports one, so the caption is generated '
+                       'directly instead of after visible reasoning.'))
         self.remove_tag_separators_container = QWidget()
         remove_tag_separators_layout = QHBoxLayout(
             self.remove_tag_separators_container)
@@ -200,18 +248,47 @@ class CaptionSettingsForm(QVBoxLayout):
             'Remove tag separators in caption')
         remove_tag_separators_layout.addWidget(remove_tag_separators_label)
         remove_tag_separators_layout.addWidget(
+            create_help_label(
+                'Remove the tag separator (comma by default) from '
+                'generated captions, so it can\'t be confused with an '
+                'actual tag boundary.'))
+        remove_tag_separators_layout.addWidget(
             self.remove_tag_separators_check_box)
-        basic_settings_form.addRow('Model', self.model_row_container)
-        basic_settings_form.addRow('Prompt template',
-                                   self.prompt_template_row_container)
-        self.prompt_label = QLabel('Prompt')
+        basic_settings_form.addRow(
+            label_with_help(
+                'Model',
+                'The auto-captioning model to use. Pick a built-in or '
+                'locally downloaded model, or paste a Hugging Face model '
+                'ID directly.'),
+            self.model_row_container)
+        basic_settings_form.addRow(
+            label_with_help(
+                'Prompt template',
+                'Insert a starting-point prompt for a target image-'
+                'generation model and purpose, optionally combined with '
+                'instructions tuned to the selected captioning model.'),
+            self.prompt_template_row_container)
+        self.prompt_label = label_with_help(
+            'Prompt',
+            'Instructions given to the captioning model. Supports '
+            '{tags}, {name}, and {directory}/{folder} template '
+            'variables.')
         basic_settings_form.addRow(self.prompt_label, self.prompt_text_edit)
-        self.caption_start_label = QLabel('Start caption with')
+        self.caption_start_label = label_with_help(
+            'Start caption with',
+            'Text that every generated caption will start with.')
         basic_settings_form.addRow(self.caption_start_label,
                                    self.caption_start_line_edit)
-        basic_settings_form.addRow('Caption position',
-                                   self.caption_position_combo_box)
-        self.device_label = QLabel('Device')
+        basic_settings_form.addRow(
+            label_with_help(
+                'Caption position',
+                'Where to place the generated caption relative to the '
+                'image\'s existing tags.'),
+            self.caption_position_combo_box)
+        self.device_label = label_with_help(
+            'Device',
+            'Whether to run the model on the GPU or CPU. GPU is much '
+            'faster but needs enough VRAM to fit the model.')
         basic_settings_form.addRow(self.device_label, self.device_combo_box)
         basic_settings_form.addRow(self.load_in_4_bit_container)
         basic_settings_form.addRow(self.load_in_8_bit_container)
@@ -236,7 +313,9 @@ class CaptionSettingsForm(QVBoxLayout):
             key='wd_tagger_max_tags', default=30, minimum=1, maximum=999)
         (self.wd_tagger_load_in_8_bit_container,
          self.wd_tagger_load_in_8_bit_check_box) = self.create_checkbox_row(
-            'Load in 8-bit', key='wd_tagger_load_in_8_bit', default=False)
+            'Load in 8-bit', key='wd_tagger_load_in_8_bit', default=False,
+            tooltip='Quantize the WD Tagger model to 8-bit to use less '
+                   'memory, at some cost to tagging quality.')
         tags_to_exclude_form = QFormLayout()
         tags_to_exclude_form.setRowWrapPolicy(
             QFormLayout.RowWrapPolicy.WrapAllRows)
@@ -244,14 +323,30 @@ class CaptionSettingsForm(QVBoxLayout):
             QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         self.tags_to_exclude_text_edit = SettingsPlainTextEdit(
             key='wd_tagger_tags_to_exclude')
-        tags_to_exclude_form.addRow('Tags to exclude',
-                                    self.tags_to_exclude_text_edit)
+        tags_to_exclude_form.addRow(
+            label_with_help(
+                'Tags to exclude',
+                'Tags that should never be generated, separated by '
+                'commas.'),
+            self.tags_to_exclude_text_edit)
         set_text_edit_height(self.tags_to_exclude_text_edit, 4)
-        wd_tagger_settings_form.addRow('Show probabilities',
-                                       self.show_probabilities_check_box)
-        wd_tagger_settings_form.addRow('Minimum probability',
-                                       self.min_probability_spin_box)
-        wd_tagger_settings_form.addRow('Maximum tags', self.max_tags_spin_box)
+        wd_tagger_settings_form.addRow(
+            label_with_help(
+                'Show probabilities',
+                'Include each tag\'s confidence score in the console '
+                'output.'),
+            self.show_probabilities_check_box)
+        wd_tagger_settings_form.addRow(
+            label_with_help(
+                'Minimum probability',
+                'Only include tags the model is at least this '
+                'confident about, from 0 to 1.'),
+            self.min_probability_spin_box)
+        wd_tagger_settings_form.addRow(
+            label_with_help(
+                'Maximum tags',
+                'The maximum number of tags to generate per image.'),
+            self.max_tags_spin_box)
         wd_tagger_settings_form.addRow(self.wd_tagger_load_in_8_bit_container)
         wd_tagger_settings_form.addRow(tags_to_exclude_form)
 
@@ -273,10 +368,19 @@ class CaptionSettingsForm(QVBoxLayout):
         self.bad_words_line_edit.setClearButtonEnabled(True)
         self.forced_words_line_edit = SettingsLineEdit(key='forced_words')
         self.forced_words_line_edit.setClearButtonEnabled(True)
-        bad_forced_words_form.addRow('Discourage from caption',
-                                     self.bad_words_line_edit)
-        bad_forced_words_form.addRow('Include in caption',
-                                     self.forced_words_line_edit)
+        bad_forced_words_form.addRow(
+            label_with_help(
+                'Discourage from caption',
+                'Words or phrases the model should avoid using in the '
+                'caption, separated by commas.'),
+            self.bad_words_line_edit)
+        bad_forced_words_form.addRow(
+            label_with_help(
+                'Include in caption',
+                'Words or phrases that should appear somewhere in the '
+                'caption, separated by commas. Separate alternatives '
+                'within a group with |.'),
+            self.forced_words_line_edit)
         self.min_new_token_count_spin_box = FocusedScrollSettingsSpinBox(
             key='min_new_tokens', default=1, minimum=1, maximum=999)
         self.max_new_token_count_spin_box = FocusedScrollSettingsSpinBox(
@@ -325,29 +429,89 @@ class CaptionSettingsForm(QVBoxLayout):
         generation_preset_row_layout.addWidget(
             self.generation_preset_apply_button)
         advanced_settings_form.addRow(bad_forced_words_form)
-        advanced_settings_form.addRow('Generation preset',
-                                      self.generation_preset_row_container)
+        advanced_settings_form.addRow(
+            label_with_help(
+                'Generation preset',
+                'Apply a set of generation parameter defaults below, '
+                'tuned to a specific captioning model.'),
+            self.generation_preset_row_container)
         advanced_settings_form.addRow(HorizontalLine())
-        advanced_settings_form.addRow('Minimum tokens',
-                                      self.min_new_token_count_spin_box)
-        advanced_settings_form.addRow('Maximum tokens',
-                                      self.max_new_token_count_spin_box)
-        advanced_settings_form.addRow('Number of beams',
-                                      self.beam_count_spin_box)
-        advanced_settings_form.addRow('Length penalty',
-                                      self.length_penalty_spin_box)
-        advanced_settings_form.addRow('Use sampling',
-                                      self.use_sampling_check_box)
-        advanced_settings_form.addRow('Temperature',
-                                      self.temperature_spin_box)
-        advanced_settings_form.addRow('Top-k', self.top_k_spin_box)
-        advanced_settings_form.addRow('Top-p', self.top_p_spin_box)
-        advanced_settings_form.addRow('Repetition penalty',
-                                      self.repetition_penalty_spin_box)
-        advanced_settings_form.addRow('No repeat n-gram size',
-                                      self.no_repeat_ngram_size_spin_box)
+        advanced_settings_form.addRow(
+            label_with_help(
+                'Minimum tokens',
+                'The minimum number of new tokens to generate, '
+                'including any reasoning/thinking tokens for a model '
+                'that uses them.'),
+            self.min_new_token_count_spin_box)
+        advanced_settings_form.addRow(
+            label_with_help(
+                'Maximum tokens',
+                'The maximum number of new tokens to generate. Too low '
+                'can cut a caption off mid-sentence, especially for a '
+                'model with a reasoning step.'),
+            self.max_new_token_count_spin_box)
+        advanced_settings_form.addRow(
+            label_with_help(
+                'Number of beams',
+                'The number of candidate sequences to explore at once '
+                '(beam search). Higher can improve quality but is '
+                'slower and uses more memory. 1 disables beam search.'),
+            self.beam_count_spin_box)
+        advanced_settings_form.addRow(
+            label_with_help(
+                'Length penalty',
+                'Favors longer (above 1) or shorter (below 1) captions '
+                'when using beam search. Has no effect with only 1 '
+                'beam.'),
+            self.length_penalty_spin_box)
+        advanced_settings_form.addRow(
+            label_with_help(
+                'Use sampling',
+                'Pick each next word randomly, weighted by probability, '
+                'instead of always picking the most likely one. Needed '
+                'for Temperature/Top-k/Top-p to have any effect.'),
+            self.use_sampling_check_box)
+        advanced_settings_form.addRow(
+            label_with_help(
+                'Temperature',
+                'How random the sampling is. Lower is more focused, '
+                'higher is more random. Only applies when Use sampling '
+                'is checked.'),
+            self.temperature_spin_box)
+        advanced_settings_form.addRow(
+            label_with_help(
+                'Top-k',
+                'Only sample from the k most likely next words. 0 '
+                'disables this limit. Only applies when Use sampling '
+                'is checked.'),
+            self.top_k_spin_box)
+        advanced_settings_form.addRow(
+            label_with_help(
+                'Top-p',
+                'Only sample from the smallest set of words whose '
+                'combined probability reaches p. 1 disables this '
+                'limit. Only applies when Use sampling is checked.'),
+            self.top_p_spin_box)
+        advanced_settings_form.addRow(
+            label_with_help(
+                'Repetition penalty',
+                'Penalizes words that already appeared in the caption, '
+                'to discourage repetition. 1 disables this.'),
+            self.repetition_penalty_spin_box)
+        advanced_settings_form.addRow(
+            label_with_help(
+                'No repeat n-gram size',
+                'Blocks the model from repeating any sequence of this '
+                'many words. 0 disables this; a model with a reasoning '
+                'step sometimes needs it disabled, since it can '
+                'legitimately repeat phrases while reasoning.'),
+            self.no_repeat_ngram_size_spin_box)
         advanced_settings_form.addRow(HorizontalLine())
-        advanced_settings_form.addRow('GPU index', self.gpu_index_spin_box)
+        advanced_settings_form.addRow(
+            label_with_help(
+                'GPU index',
+                'Which GPU to use, if more than one is available.'),
+            self.gpu_index_spin_box)
         self.advanced_settings_form_container.hide()
 
         self.addLayout(basic_settings_form)
@@ -514,14 +678,18 @@ class CaptionSettingsForm(QVBoxLayout):
             wd_tagger_settings['tags_to_exclude'])
 
     @staticmethod
-    def create_checkbox_row(label_text: str, key: str,
-                            default: bool) -> tuple[QWidget, SettingsBigCheckBox]:
+    def create_checkbox_row(
+            label_text: str, key: str, default: bool,
+            tooltip: str | None = None
+    ) -> tuple[QWidget, SettingsBigCheckBox]:
         container = QWidget()
         layout = QHBoxLayout(container)
         layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
         layout.setContentsMargins(0, 0, 0, 0)
         check_box = SettingsBigCheckBox(key=key, default=default)
         layout.addWidget(QLabel(label_text))
+        if tooltip:
+            layout.addWidget(create_help_label(tooltip))
         layout.addWidget(check_box)
         return container, check_box
 
