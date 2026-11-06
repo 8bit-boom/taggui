@@ -211,6 +211,29 @@ class ImageListView(QListView):
             for proxy_index in selected_image_proxy_indices]
         return selected_image_indices
 
+    def select_image_indices(self, source_indices: list[QModelIndex]):
+        """
+        Select the images at the given source-model indices, replacing the
+        current selection (used to select the failed images after a
+        captioning run so they can be retried).
+        """
+        item_selection = QItemSelection()
+        first_proxy_index = None
+        for source_index in source_indices:
+            proxy_index = self.proxy_image_list_model.mapFromSource(
+                source_index)
+            if not proxy_index.isValid():
+                continue
+            if first_proxy_index is None:
+                first_proxy_index = proxy_index
+            item_selection.append(QItemSelectionRange(proxy_index))
+        if first_proxy_index is None:
+            return
+        self.setCurrentIndex(first_proxy_index)
+        self.selectionModel().select(
+            item_selection, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+        self.scrollTo(first_proxy_index)
+
     @Slot()
     def paste_tags(self):
         selected_image_count = len(self.selectedIndexes())

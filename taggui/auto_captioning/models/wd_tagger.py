@@ -127,6 +127,9 @@ class WdTaggerModel:
 
 class WdTagger(AutoCaptioningModel):
     image_mode = 'RGBA'
+    # The "model" is an ONNX Runtime session wrapper, not a torch module,
+    # so `torch.compile` does not apply (and would crash if applied).
+    supports_torch_compile = False
 
     def __init__(self,
                  captioning_thread_: 'captioning_thread.CaptioningThread',

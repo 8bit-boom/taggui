@@ -10,12 +10,23 @@ from auto_captioning.models.llava_llama_3 import LlavaLlama3
 from auto_captioning.models.llava_next import (LlavaNext34b, LlavaNextMistral,
                                                LlavaNextVicuna)
 from auto_captioning.models.moondream import Moondream1, Moondream2
+from auto_captioning.models.openai_compatible import OpenAiCompatibleEndpoint
 from auto_captioning.models.phi_3_vision import Phi3Vision
 from auto_captioning.models.qwen3_5 import Qwen3_5
 from auto_captioning.models.qwen3_5_moe import Qwen3_5Moe
 from auto_captioning.models.qwen3_vl import Qwen3VL
 from auto_captioning.models.wd_tagger import WdTagger
 from utils.settings import get_settings
+
+# A pseudo-model: instead of loading a local `transformers` checkpoint,
+# images are sent to a model served by an OpenAI-compatible API server
+# (vLLM, SGLang, ...), which is the fastest way to caption very large
+# datasets with the Qwen3-VL family (see `openai_compatible.py`).
+REMOTE_ENDPOINT_MODEL_ID = 'Remote API (vLLM / SGLang)'
+
+
+def is_remote_endpoint_model(model_id: str) -> bool:
+    return model_id.strip() == REMOTE_ENDPOINT_MODEL_ID
 
 MODELS = [
     'Qwen/Qwen3-VL-8B-Instruct',
@@ -92,6 +103,8 @@ def get_all_models() -> list[str]:
 
 
 def get_model_class(model_id: str) -> type[AutoCaptioningModel]:
+    if is_remote_endpoint_model(model_id):
+        return OpenAiCompatibleEndpoint
     lowercase_model_id = model_id.lower()
     # Qwen3.6, Qwen3.8, and other Qwen3.x point releases beyond 3.5 are
     # released as new checkpoints of the same `qwen3_5`/`qwen3_5_moe` model
