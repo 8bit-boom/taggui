@@ -60,6 +60,25 @@ bug fixes.
   reasoning model needs a much larger token budget than a direct
   captioner, since its `<think>` block consumes most of it before the
   actual answer starts.
+- **Per-model settings**: switching the `Model` dropdown now saves the
+  outgoing model's full settings snapshot (prompt, generation parameters,
+  quantization, everything `get_caption_settings()` covers) and restores
+  the newly-selected model's own saved settings, if any - so each model
+  keeps its own configuration instead of sharing one global set
+  (`taggui/auto_captioning/model_settings.py`,
+  `CaptionSettingsForm.on_model_changed()`).
+- **Model Chains**: build and save a named, ordered sequence of
+  captioning passes - each step its own model plus a full settings
+  snapshot - and run them one after another over the same selected
+  images from the `Model Chains...` button. Each step's model is loaded
+  once and reused for every image before moving to the next step (the
+  same model-cache reuse normal captioning already has), and a step's
+  caption is actually applied (not just previewed), typically so a later
+  step's prompt can reference an earlier step's output via the `{tags}`
+  template variable - e.g. a WD Tagger pass for booru tags, then a
+  Qwen3-VL pass prompted to write a natural-language caption from those
+  tags (`taggui/auto_captioning/model_chains.py`,
+  `taggui/dialogs/model_chain_dialog.py`).
 - **WD Tagger 8-bit quantization**, restricted to `MatMul` nodes only
   (quantizing the `ConvInteger` nodes in WD Tagger's ConvNeXt/EVA02
   backbones crashes some ONNX Runtime builds at inference time).

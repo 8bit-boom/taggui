@@ -15,6 +15,8 @@ from auto_captioning.load_presets import LOAD_PRESETS
 from auto_captioning.caption_profiles import (get_caption_profiles,
                                               save_caption_profiles)
 from auto_captioning.captioning_thread import CaptioningThread
+from auto_captioning.model_settings import (get_model_settings,
+                                            save_model_settings)
 from auto_captioning.auto_captioning_model import ATTENTION_IMPLEMENTATIONS
 from auto_captioning.generation_presets import GENERATION_PRESETS
 from auto_captioning.prompt_templates import (CAPTIONER_PROMPT_SUFFIXES,
@@ -29,6 +31,7 @@ from auto_captioning.models_list import (REMOTE_ENDPOINT_MODEL_ID,
                                          is_remote_endpoint_model)
 from dialogs.caption_multiple_images_dialog import CaptionMultipleImagesDialog
 from dialogs.model_manager_dialog import ModelManagerDialog
+from dialogs.model_chain_dialog import ModelChainDialog
 from dialogs.prompt_comparison_dialog import PromptComparisonDialog
 from models.image_list_model import ImageListModel
 from utils.big_widgets import TallPushButton
@@ -206,7 +209,13 @@ class CaptionSettingsForm(QVBoxLayout):
         self.compare_prompts_button.setToolTip(
             'Caption a few selected images with two different prompts '
             'without applying the captions, to compare their output.')
-        # (Connected by `AutoCaptioner`, which owns the captioning state.)
+        self.model_chains_button = QPushButton('Model Chains...')
+        self.model_chains_button.setToolTip(
+            'Build and run a sequence of captioning passes, each with '
+            'its own model and settings, applied one after another to '
+            'the same selected images.')
+        # (Both connected by `AutoCaptioner`, which owns the captioning
+        # state.)
         self.caption_start_line_edit = SettingsLineEdit(key='caption_start')
         self.caption_start_line_edit.setClearButtonEnabled(True)
         self.caption_position_combo_box = FocusedScrollSettingsComboBox(
@@ -403,6 +412,7 @@ class CaptionSettingsForm(QVBoxLayout):
             'variables.')
         basic_settings_form.addRow(self.prompt_label, self.prompt_text_edit)
         basic_settings_form.addRow('', self.compare_prompts_button)
+        basic_settings_form.addRow('', self.model_chains_button)
         self.caption_start_label = label_with_help(
             'Start caption with',
             'Text that every generated caption will start with.')
@@ -746,6 +756,14 @@ class CaptionSettingsForm(QVBoxLayout):
             self.load_in_4_bit_check_box.setChecked(False)
             self.load_in_8_bit_check_box.setChecked(False)
 
+        # Tracks which model's settings are currently loaded, so
+        # `on_model_changed` below knows which model to save the outgoing
+        # settings under. Set before connecting the signal so the initial
+        # setup above doesn't trigger a spurious save.
+        self.last_model_id = self.model_combo_box.currentText()
+        self.model_combo_box.currentTextChanged.connect(
+            self.on_model_changed)
+
         self.reload_profiles()
         # Connect this after the widgets are populated so that loading a
         # profile does not race with the initial setup above.
@@ -805,6 +823,29 @@ class CaptionSettingsForm(QVBoxLayout):
         del profiles[name]
         save_caption_profiles(profiles)
         self.reload_profiles()
+
+    @Slot(str)
+    def on_model_changed(self, new_model_id: str):
+        """
+        Give each model its own remembered settings (prompt, generation
+        parameters, quantization, etc.): save the outgoing model's current
+        settings before switching away from it, then restore the
+        newly-selected model's own settings if it has any saved.
+        """
+        old_model_id = self.last_model_id
+        if old_model_id and old_model_id != new_model_id:
+            settings_to_save = self.get_caption_settings()
+            # `get_caption_settings()` reads `model_id` from the combo box,
+            # which has already changed to `new_model_id` by the time this
+            # slot runs - save it under the model it actually describes.
+            settings_to_save['model_id'] = old_model_id
+            all_model_settings = get_model_settings()
+            all_model_settings[old_model_id] = settings_to_save
+            save_model_settings(all_model_settings)
+        self.last_model_id = new_model_id
+        saved_settings = get_model_settings().get(new_model_id)
+        if saved_settings is not None:
+            self.apply_caption_settings(saved_settings)
 
     def apply_caption_settings(self, caption_settings: dict):
         """
@@ -1259,6 +1300,8 @@ class AutoCaptioner(QDockWidget):
             self.unload_model)
         self.caption_settings_form.compare_prompts_button.clicked.connect(
             self.compare_prompts)
+        self.caption_settings_form.model_chains_button.clicked.connect(
+            self.show_model_chains_dialog)
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setSizeAdjustPolicy(
@@ -1306,6 +1349,17 @@ class AutoCaptioner(QDockWidget):
                 'before comparing prompts.')
             return
         dialog = PromptComparisonDialog(self)
+        dialog.exec()
+
+    @Slot()
+    def show_model_chains_dialog(self):
+        if self.is_captioning:
+            QMessageBox.warning(
+                self, 'Auto-Captioner Busy',
+                'Captioning is already running. Wait for it to finish '
+                'before running a model chain.')
+            return
+        dialog = ModelChainDialog(self)
         dialog.exec()
 
     @Slot(int)
