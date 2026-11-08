@@ -9,8 +9,22 @@ import transformers
 from PySide6.QtGui import QImageReader
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from utils.settings import get_settings
+from utils.settings import DEFAULT_SETTINGS, get_settings
 from widgets.main_window import MainWindow
+
+
+def apply_ui_scale():
+    """
+    Set `QT_SCALE_FACTOR` from the saved UI scale setting, if any. Must run
+    before `QApplication` is constructed, since Qt only reads this
+    environment variable at that point.
+    """
+    settings = get_settings()
+    ui_scale_percent = settings.value(
+        'ui_scale_percent', defaultValue=DEFAULT_SETTINGS['ui_scale_percent'],
+        type=int)
+    if ui_scale_percent != 100:
+        os.environ['QT_SCALE_FACTOR'] = str(ui_scale_percent / 100)
 
 
 def suppress_warnings():
@@ -31,6 +45,7 @@ def suppress_warnings():
 
 
 def run_gui():
+    apply_ui_scale()
     app = QApplication([])
     # The application name is shown in the taskbar.
     app.setApplicationName('TagGUI')

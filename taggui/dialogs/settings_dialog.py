@@ -19,25 +19,35 @@ class SettingsDialog(QDialog):
         grid_layout = QGridLayout()
         grid_layout.addWidget(QLabel('Font size (pt)'), 0, 0,
                               Qt.AlignmentFlag.AlignRight)
-        grid_layout.addWidget(QLabel('File types to show in image list'), 1, 0,
+        grid_layout.addWidget(QLabel('UI scale (%)'), 1, 0,
                               Qt.AlignmentFlag.AlignRight)
-        grid_layout.addWidget(QLabel('Image width in image list (px)'), 2, 0,
+        grid_layout.addWidget(QLabel('File types to show in image list'), 2, 0,
                               Qt.AlignmentFlag.AlignRight)
-        grid_layout.addWidget(QLabel('Tag separator (\\n for newline)'), 3, 0,
+        grid_layout.addWidget(QLabel('Image width in image list (px)'), 3, 0,
                               Qt.AlignmentFlag.AlignRight)
-        grid_layout.addWidget(QLabel('Insert space after tag separator'), 4, 0,
+        grid_layout.addWidget(QLabel('Tag separator (\\n for newline)'), 4, 0,
+                              Qt.AlignmentFlag.AlignRight)
+        grid_layout.addWidget(QLabel('Insert space after tag separator'), 5, 0,
                               Qt.AlignmentFlag.AlignRight)
         grid_layout.addWidget(QLabel('Show tag autocomplete suggestions'),
-                              5, 0, Qt.AlignmentFlag.AlignRight)
-        grid_layout.addWidget(QLabel('Auto-captioning models directory'), 6, 0,
+                              6, 0, Qt.AlignmentFlag.AlignRight)
+        grid_layout.addWidget(QLabel('Auto-captioning models directory'), 7, 0,
                               Qt.AlignmentFlag.AlignRight)
-        grid_layout.addWidget(QLabel('Danbooru tag autocomplete CSV'), 8, 0,
+        grid_layout.addWidget(QLabel('Danbooru tag autocomplete CSV'), 9, 0,
                               Qt.AlignmentFlag.AlignRight)
 
         font_size_spin_box = SettingsSpinBox(
             key='font_size', default=DEFAULT_SETTINGS['font_size'],
             minimum=1, maximum=99)
         font_size_spin_box.valueChanged.connect(self.show_restart_warning)
+        ui_scale_spin_box = SettingsSpinBox(
+            key='ui_scale_percent',
+            default=DEFAULT_SETTINGS['ui_scale_percent'],
+            minimum=50, maximum=300)
+        ui_scale_spin_box.setToolTip(
+            'Scale the entire GUI (fonts, icons, spacing, and widget sizes) '
+            'by this percentage.')
+        ui_scale_spin_box.valueChanged.connect(self.show_restart_warning)
         # Images that are too small cause lag, so set a minimum width.
         image_list_image_width_spin_box = SettingsSpinBox(
             key='image_list_image_width',
@@ -97,23 +107,25 @@ class SettingsDialog(QDialog):
 
         grid_layout.addWidget(font_size_spin_box, 0, 1,
                               Qt.AlignmentFlag.AlignLeft)
-        grid_layout.addWidget(file_types_line_edit, 1, 1,
+        grid_layout.addWidget(ui_scale_spin_box, 1, 1,
                               Qt.AlignmentFlag.AlignLeft)
-        grid_layout.addWidget(image_list_image_width_spin_box, 2, 1,
+        grid_layout.addWidget(file_types_line_edit, 2, 1,
                               Qt.AlignmentFlag.AlignLeft)
-        grid_layout.addWidget(tag_separator_line_edit, 3, 1,
+        grid_layout.addWidget(image_list_image_width_spin_box, 3, 1,
+                              Qt.AlignmentFlag.AlignLeft)
+        grid_layout.addWidget(tag_separator_line_edit, 4, 1,
                               Qt.AlignmentFlag.AlignLeft)
         grid_layout.addWidget(self.insert_space_after_tag_separator_check_box,
-                              4, 1, Qt.AlignmentFlag.AlignLeft)
-        grid_layout.addWidget(autocomplete_tags_check_box, 5, 1,
+                              5, 1, Qt.AlignmentFlag.AlignLeft)
+        grid_layout.addWidget(autocomplete_tags_check_box, 6, 1,
                               Qt.AlignmentFlag.AlignLeft)
-        grid_layout.addWidget(self.models_directory_line_edit, 6, 1,
+        grid_layout.addWidget(self.models_directory_line_edit, 7, 1,
                               Qt.AlignmentFlag.AlignLeft)
-        grid_layout.addWidget(models_directory_button, 7, 1,
+        grid_layout.addWidget(models_directory_button, 8, 1,
                               Qt.AlignmentFlag.AlignLeft)
-        grid_layout.addWidget(self.danbooru_tags_csv_line_edit, 8, 1,
+        grid_layout.addWidget(self.danbooru_tags_csv_line_edit, 9, 1,
                               Qt.AlignmentFlag.AlignLeft)
-        grid_layout.addWidget(danbooru_tags_csv_button, 9, 1,
+        grid_layout.addWidget(danbooru_tags_csv_button, 10, 1,
                               Qt.AlignmentFlag.AlignLeft)
         layout.addLayout(grid_layout)
 

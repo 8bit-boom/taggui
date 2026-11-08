@@ -13,7 +13,12 @@ DEFAULT_SETTINGS = {
     'insert_space_after_tag_separator': True,
     'autocomplete_tags': True,
     'models_directory_path': '',
-    'danbooru_tags_csv_path': ''
+    'danbooru_tags_csv_path': '',
+    # Percentage scale applied to the whole GUI (fonts, icons, spacing, and
+    # widget sizes) via `QT_SCALE_FACTOR`. Takes effect on restart because
+    # Qt reads this environment variable only once, at `QApplication`
+    # construction.
+    'ui_scale_percent': 100
 }
 
 

@@ -79,6 +79,13 @@ bug fixes.
   Qwen3-VL pass prompted to write a natural-language caption from those
   tags (`taggui/auto_captioning/model_chains.py`,
   `taggui/dialogs/model_chain_dialog.py`).
+- **UI scale setting**: a "UI scale (%)" spin box in Settings (50-300%,
+  default 100) scales the entire GUI - fonts, icons, spacing, and widget
+  sizes - via Qt's `QT_SCALE_FACTOR` environment variable, set from the
+  saved setting before `QApplication` is constructed. Like the existing
+  font size setting, it takes effect on restart, since Qt only reads this
+  variable once, at startup (`taggui/run_gui.py:apply_ui_scale()`,
+  `taggui/dialogs/settings_dialog.py`).
 - **WD Tagger 8-bit quantization**, restricted to `MatMul` nodes only
   (quantizing the `ConvInteger` nodes in WD Tagger's ConvNeXt/EVA02
   backbones crashes some ONNX Runtime builds at inference time).
