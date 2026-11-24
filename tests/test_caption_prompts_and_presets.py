@@ -86,11 +86,29 @@ def test_generation_preset_coverage_and_schema(caption_settings_form):
 @pytest.mark.parametrize('captioner', list(GENERATION_PRESETS))
 def test_apply_generation_preset(caption_settings_form, captioner):
     form = caption_settings_form
+    preset = GENERATION_PRESETS[captioner]
+    widgets = {
+        'min_new_tokens': form.min_new_token_count_spin_box,
+        'max_new_tokens': form.max_new_token_count_spin_box,
+        'num_beams': form.beam_count_spin_box,
+        'length_penalty': form.length_penalty_spin_box,
+        'temperature': form.temperature_spin_box,
+        'top_k': form.top_k_spin_box,
+        'top_p': form.top_p_spin_box,
+        'repetition_penalty': form.repetition_penalty_spin_box,
+        'no_repeat_ngram_size': form.no_repeat_ngram_size_spin_box,
+    }
+    for key, widget in widgets.items():
+        widget.setValue(widget.minimum() if preset[key] != widget.minimum()
+                        else widget.maximum())
+    form.use_sampling_check_box.setChecked(not preset['do_sample'])
+    before = form.get_caption_settings()['generation_parameters']
+    assert all(before[key] != preset[key] for key in preset)
+
     assert form.generation_preset_combo_box.findText(captioner) >= 0
     form.generation_preset_combo_box.setCurrentText(captioner)
     form.generation_preset_apply_button.click()
-    assert (form.get_caption_settings()['generation_parameters']
-            == GENERATION_PRESETS[captioner])
+    assert form.get_caption_settings()['generation_parameters'] == preset
 
 
 @pytest.mark.parametrize('disable_thinking', [False, True])
