@@ -1280,6 +1280,10 @@ class AutoCaptioner(QDockWidget):
                              | Qt.DockWidgetArea.RightDockWidgetArea)
 
         self.start_cancel_button = TallPushButton('Start Auto-Captioning')
+        self.benchmark_button = QPushButton('Benchmark selected images')
+        self.benchmark_button.setToolTip(
+            'Compare settings on up to 8 selected images without applying '
+            'captions. Cancel using the captioning button.')
         self.progress_bar = QProgressBar()
         self.progress_bar.setFormat('%v / %m images captioned (%p%)')
         self.progress_bar.hide()
@@ -1290,6 +1294,7 @@ class AutoCaptioner(QDockWidget):
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.addWidget(self.start_cancel_button)
+        layout.addWidget(self.benchmark_button)
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.console_text_edit)
         self.caption_settings_form = CaptionSettingsForm()
@@ -1312,6 +1317,12 @@ class AutoCaptioner(QDockWidget):
 
         self.start_cancel_button.clicked.connect(
             self.start_or_cancel_captioning)
+        self.benchmark_button.clicked.connect(self.start_benchmark)
+
+    @Slot()
+    def start_benchmark(self):
+        if not self.is_captioning:
+            self.generate_captions(benchmark=True)
 
     @Slot()
     def unload_model(self):
@@ -1425,6 +1436,7 @@ class AutoCaptioner(QDockWidget):
 
     def set_is_captioning(self, is_captioning: bool):
         self.is_captioning = is_captioning
+        self.benchmark_button.setEnabled(not is_captioning)
         button_text = ('Cancel Auto-Captioning' if is_captioning
                        else 'Start Auto-Captioning')
         self.start_cancel_button.setText(button_text)
@@ -1469,11 +1481,15 @@ class AutoCaptioner(QDockWidget):
         alert.exec()
 
     @Slot()
-    def generate_captions(self):
+    def generate_captions(self, benchmark=False):
         selected_image_indices = self.image_list.get_selected_image_indices()
         selected_image_count = len(selected_image_indices)
+        if benchmark and not selected_image_count:
+            QMessageBox.information(self, 'Benchmark',
+                                    'Select at least one image first.')
+            return
         show_alert_when_finished = False
-        if selected_image_count > 1:
+        if selected_image_count > 1 and not benchmark:
             confirmation_dialog = CaptionMultipleImagesDialog(
                 selected_image_count)
             reply = confirmation_dialog.exec()
@@ -1484,12 +1500,15 @@ class AutoCaptioner(QDockWidget):
         self.set_is_captioning(True)
         self.caption_settings_form.unload_model_button.setEnabled(False)
         caption_settings = self.caption_settings_form.get_caption_settings()
-        if caption_settings['caption_position'] != CaptionPosition.DO_NOT_ADD:
+        if benchmark:
+            caption_settings['_benchmark'] = True
+        if (not benchmark and
+                caption_settings['caption_position'] != CaptionPosition.DO_NOT_ADD):
             self.image_list_model.add_to_undo_stack(
                 action_name=f'Generate '
                             f'{pluralize("Caption", selected_image_count)}',
                 should_ask_for_confirmation=selected_image_count > 1)
-        if selected_image_count > 1:
+        if selected_image_count > 1 and not benchmark:
             self.progress_bar.setRange(0, selected_image_count)
             self.progress_bar.setValue(0)
             self.progress_bar.show()

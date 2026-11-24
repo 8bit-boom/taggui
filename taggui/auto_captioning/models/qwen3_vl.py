@@ -33,6 +33,7 @@ class Qwen3VL(AutoCaptioningModel):
     # into one batch, so several images can be captioned per `generate()`
     # call (the biggest in-process speedup).
     supports_batching = True
+    group_similar_images = True
 
     def get_additional_error_message(self) -> str | None:
         if Qwen3VLForConditionalGeneration is None:

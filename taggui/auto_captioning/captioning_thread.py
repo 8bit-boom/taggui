@@ -122,6 +122,10 @@ class CaptioningThread(QThread):
         self.skip_already_captioned = False
         # Set by the widget after the test-run prompt; `None` = not asked.
         self.continue_after_pilot: bool | None = None
+        self.preparation_seconds = 0.0
+        self.generation_seconds = 0.0
+        self.application_seconds = 0.0
+        self.oom_count = 0
 
     def record_failure(self, image_index: QModelIndex, image: Image | None,
                        error_text: str):
@@ -145,6 +149,7 @@ class CaptioningThread(QThread):
         are returned as a status instead of raised, so that one bad image
         doesn't end the run.
         """
+        start_time = perf_counter()
         try:
             image: Image = self.image_list_model.data(
                 image_index, Qt.ItemDataRole.UserRole)
@@ -159,6 +164,9 @@ class CaptioningThread(QThread):
         except Exception as exception:
             return ('failed', image_index, None, None,
                     f'{type(exception).__name__}: {exception}')
+        finally:
+            with self.progress_lock:
+                self.preparation_seconds += perf_counter() - start_time
 
     def generate_single_result(
             self, model: AutoCaptioningModel,
@@ -171,38 +179,47 @@ class CaptioningThread(QThread):
         """
         _, image, image_prompt, payload = item
         start_time = perf_counter()
-        try:
-            if model.supports_batching:
-                # The prepared payload is a PIL image; the per-image
-                # processor call happens here.
-                model_inputs = model.get_model_inputs(image_prompt, image)
-            else:
-                model_inputs = payload
-            caption, console_caption = model.generate_caption(model_inputs,
-                                                              image_prompt)
-            return caption, console_caption, perf_counter() - start_time
-        except torch.cuda.OutOfMemoryError:
+        def attempt():
+            try:
+                if model.supports_batching:
+                    model_inputs = model.get_model_inputs(image_prompt, image)
+                else:
+                    model_inputs = payload
+                caption, console_caption = model.generate_caption(
+                    model_inputs, image_prompt)
+                return (caption, console_caption, perf_counter() - start_time), False
+            except torch.cuda.OutOfMemoryError:
+                return None, True
+            except Exception as exception:
+                return (None, f'{type(exception).__name__}: {exception}',
+                        perf_counter() - start_time), False
+
+        result, oom = attempt()
+        if not oom:
+            return result
+        else:
+            with self.progress_lock:
+                self.oom_count += 1
             torch.cuda.empty_cache()
             # One retry at half the pixel budget: an image that doesn't
             # fit alongside its KV cache often fits at a lower resolution.
-            reduced_inputs = model.prepare_reduced_inputs(image_prompt,
-                                                          image, 0.5)
-            if reduced_inputs is None:
-                return (None, 'torch.cuda.OutOfMemoryError (this model '
-                              'does not support the reduced-resolution '
-                              'retry)', perf_counter() - start_time)
-            print(f'Ran out of GPU memory on {image.path.name}; retrying '
-                  f'once at half the image size...')
             try:
+                if self.is_canceled:
+                    return (None, 'Canceled', perf_counter() - start_time)
+                reduced_inputs = model.prepare_reduced_inputs(image_prompt,
+                                                              image, 0.5)
+                if reduced_inputs is None:
+                    return (None, 'torch.cuda.OutOfMemoryError (this model '
+                                  'does not support the reduced-resolution '
+                                  'retry)', perf_counter() - start_time)
+                print(f'Ran out of GPU memory on {image.path.name}; retrying '
+                      f'once at half the image size...')
                 caption, console_caption = model.generate_caption(
                     reduced_inputs, image_prompt)
                 return caption, console_caption, perf_counter() - start_time
             except Exception as exception:
                 return (None, f'{type(exception).__name__}: {exception}',
                         perf_counter() - start_time)
-        except Exception as exception:
-            return (None, f'{type(exception).__name__}: {exception}',
-                    perf_counter() - start_time)
 
     def generate_batch_results(
             self, model: AutoCaptioningModel,
@@ -234,34 +251,58 @@ class CaptioningThread(QThread):
             with ThreadPoolExecutor(max_workers=model.batch_size) as executor:
                 return list(executor.map(request_one, batch))
         if model.supports_batching:
-            batch_items = [{'image_prompt': item[2], 'pil_image': item[3],
-                            'image': item[1]} for item in batch]
-            try:
-                model_inputs = model.get_batched_model_inputs(batch_items)
-                captions, console_captions = model.generate_captions_batch(
-                    model_inputs, batch_items)
-                batch_elapsed = perf_counter() - batch_start_time
-                batch_elapsed_per_image = batch_elapsed / len(batch)
-                return [(caption, console_caption, batch_elapsed_per_image)
-                        for caption, console_caption
-                        in zip(captions, console_captions)]
-            except torch.cuda.OutOfMemoryError:
-                # The inputs of a batched call cannot be unpadded into
-                # per-image inputs, so each image is re-prepared and
-                # captioned on its own (with the OOM retry and error
-                # isolation of the single-image path).
-                torch.cuda.empty_cache()
-                print(f'Ran out of GPU memory while captioning '
-                      f'{len(batch)} images at once. Retrying them one at '
-                      f'a time...')
-                return [self.generate_single_result(model, item)
-                        for item in batch]
-            except Exception as exception:
-                print(f'Batched captioning failed '
-                      f'({type(exception).__name__}: {exception}). '
-                      f'Retrying the images one at a time...')
-                return [self.generate_single_result(model, item)
-                        for item in batch]
+            def attempt(items):
+                batch_items = [{'image_prompt': item[2], 'pil_image': item[3],
+                                'image': item[1]} for item in items]
+                try:
+                    model_inputs = model.get_batched_model_inputs(batch_items)
+                    captions, console_captions = model.generate_captions_batch(
+                        model_inputs, batch_items)
+                    if (len(captions) != len(items)
+                            or len(console_captions) != len(items)):
+                        raise ValueError('Batch returned an unexpected number '
+                                         'of captions')
+                    elapsed = (perf_counter() - batch_start_time) / len(items)
+                    return [(caption, console_caption, elapsed)
+                            for caption, console_caption
+                            in zip(captions, console_captions)], None
+                except torch.cuda.OutOfMemoryError:
+                    return None, 'oom'
+                except Exception as exception:
+                    return None, f'{type(exception).__name__}: {exception}'
+
+            results = []
+            offset = 0
+            while offset < len(batch) and not self.is_canceled:
+                size = min(model.batch_size, len(batch) - offset)
+                items = batch[offset:offset + size]
+                generated, error = attempt(items)
+                if error == 'oom':
+                    with self.progress_lock:
+                        self.oom_count += 1
+                    # The attempt frame (and its failed tensors/traceback) is
+                    # gone before the allocator cache is released.
+                    torch.cuda.empty_cache()
+                    model.batch_size = max(1, size // 2)
+                    if size == 1:
+                        results.append(self.generate_single_result(
+                            model, items[0]))
+                        offset += 1
+                        continue
+                    print(f'CUDA out of memory at batch size {size}; '
+                          f'retrying at {model.batch_size} for this run.')
+                    continue
+                if error is not None:
+                    print(f'Batched captioning failed ({error}). '
+                          f'Retrying the images one at a time...')
+                    for item in items:
+                        if self.is_canceled:
+                            break
+                        results.append(self.generate_single_result(model, item))
+                else:
+                    results.extend(generated)
+                offset += size
+            return results
         # A model without batching support: `prepare_image` already built
         # the per-image model inputs.
         return [self.generate_single_result(model, item) for item in batch]
@@ -269,13 +310,20 @@ class CaptioningThread(QThread):
     def process_batch(self, model: AutoCaptioningModel, batch: list[tuple],
                       caption_position: CaptionPosition,
                       are_multiple_images_selected: bool,
-                      batch_start_time: float) -> int:
+                      batch_start_time: float, results=None) -> int:
         """
         Generate captions for one batch, emit them into the image list, and
         print them to the console. Failed images are recorded and skipped.
         Returns the number of images captioned in this batch.
         """
-        results = self.generate_batch_results(model, batch)
+        if results is None:
+            generation_start = perf_counter()
+            results = self.generate_batch_results(model, batch)
+            with self.progress_lock:
+                self.generation_seconds += perf_counter() - generation_start
+        if self.is_canceled:
+            return 0
+        application_start = perf_counter()
         successes = 0
         failures = 0
         for item, (caption, console_caption, elapsed) in zip(batch, results):
@@ -310,6 +358,8 @@ class CaptioningThread(QThread):
         if are_multiple_images_selected:
             self.progress_bar_update_requested.emit(progress_value)
             self.update_progress_bar_format(model)
+        with self.progress_lock:
+            self.application_seconds += perf_counter() - application_start
         return successes
 
     def update_progress_bar_format(self, model: AutoCaptioningModel):
@@ -323,6 +373,9 @@ class CaptioningThread(QThread):
             failed_count = len(self.failed_images)
             skipped_count = (self.skipped_tagged_count
                              + self.skipped_unreadable_count)
+            prep_seconds = self.preparation_seconds
+            generation_seconds = self.generation_seconds
+            application_seconds = self.application_seconds
         processed_count = captioned_total + failed_count + skipped_count
         remaining_count = max(0, self.total_target_count - processed_count)
         elapsed = perf_counter() - self.captioning_start_time
@@ -343,7 +396,9 @@ class CaptioningThread(QThread):
                 pass
         self.progress_bar_format_update_requested.emit(
             f'{captioned_total} / {self.total_target_count} images captioned'
-            f'{stats_text}{vram_text}')
+            f'{stats_text}{vram_text} - prep/gen/dispatch '
+            f'{prep_seconds:.0f}/{generation_seconds:.0f}/'
+            f'{application_seconds:.0f} s')
 
     def _run_captioning_loop(self, model: AutoCaptioningModel,
                              image_indices: list[QModelIndex],
@@ -379,7 +434,12 @@ class CaptioningThread(QThread):
             while pending_preps and not self.is_canceled:
                 # Collect (up to) one batch of prepared images, in order.
                 batch = []
-                while pending_preps and len(batch) < batch_size:
+                batch_size = (model.batch_size if (model.supports_batching
+                              or model.is_remote_endpoint) else 1)
+                window_size = (batch_size * 2 if
+                               getattr(model, 'group_similar_images', False)
+                               and batch_size > 1 else batch_size)
+                while pending_preps and len(batch) < window_size:
                     submit_preps()
                     future = pending_preps.popleft()
                     status, image_index, image, image_prompt, payload = (
@@ -399,9 +459,32 @@ class CaptioningThread(QThread):
                 if self.is_canceled:
                     break
                 batch_start_time = perf_counter()
+                results = None
+                if window_size > batch_size and len(batch) > batch_size:
+                    # Sort a bounded window, then restore input order before
+                    # sending any results to the UI.
+                    def image_size_key(index):
+                        width, height = batch[index][3].size
+                        return (width * height, width / max(1, height))
+
+                    order = sorted(range(len(batch)), key=image_size_key)
+                    results = [None] * len(batch)
+                    offset = 0
+                    generation_start = perf_counter()
+                    while offset < len(order) and not self.is_canceled:
+                        group = order[offset:offset + model.batch_size]
+                        generated = self.generate_batch_results(
+                            model, [batch[index] for index in group])
+                        for index, result in zip(group, generated):
+                            results[index] = result
+                        offset += len(group)
+                    with self.progress_lock:
+                        self.generation_seconds += perf_counter() - generation_start
+                    if self.is_canceled:
+                        break
                 local_captioned += self.process_batch(
                     model, batch, caption_position,
-                    are_multiple_images_selected, batch_start_time)
+                    are_multiple_images_selected, batch_start_time, results)
                 # Test run: pause after the configured number of images and
                 # ask the user (via the widget) whether to continue, once
                 # per run. Only the single-device run supports this (a
@@ -488,6 +571,101 @@ class CaptioningThread(QThread):
             self._run_captioning_loop(models[0], indices, caption_position,
                                       are_multiple_images_selected)
 
+    def benchmark(self, model: AutoCaptioningModel, indices: list[QModelIndex]):
+        indices = indices[:8]
+        if not indices:
+            print('Select at least one image to benchmark.')
+            return
+        original_size = model.batch_size
+        original_settings = model.caption_settings
+        limit = min(original_size, len(indices))
+        sizes = sorted({1, max(1, limit // 2), limit})
+        if not (model.supports_batching or model.is_remote_endpoint):
+            sizes = [1]
+        budgets = [None]
+        if getattr(model, 'group_similar_images', False):
+            min_pixels, max_pixels = model.get_pixels()
+            budgets.append(max_pixels / 2_000_000)
+        trials = []
+        print('Benchmark: up to 8 selected images per configuration; '
+              'trial captions are discarded. Cancel stops between batches '
+              '(remote requests already in flight must finish).')
+        print('Results depend on image content, model, hardware, server load '
+              'and warm-up; compare caption quality before changing settings.')
+        try:
+            for budget in budgets:
+                for size in sizes:
+                    if self.is_canceled:
+                        return
+                    model.caption_settings = dict(original_settings)
+                    if budget is not None:
+                        model.caption_settings['max_image_megapixels'] = budget
+                        minimum = min_pixels / 1_000_000
+                        model.caption_settings['min_image_megapixels'] = min(
+                            minimum, budget)
+                    model.batch_size = size
+                    initial_oom_count = self.oom_count
+                    cuda_device = (getattr(model, 'device', None)
+                                   if not model.is_remote_endpoint else None)
+                    measure_vram = (cuda_device is not None
+                                    and cuda_device.type == 'cuda'
+                                    and torch.cuda.is_available())
+                    if measure_vram:
+                        try:
+                            torch.cuda.reset_peak_memory_stats(cuda_device)
+                        except Exception:
+                            measure_vram = False
+                    start = perf_counter()
+                    successes = 0
+                    failures = 0
+                    for offset in range(0, len(indices), size):
+                        if self.is_canceled:
+                            return
+                        prepared = []
+                        for index in indices[offset:offset + size]:
+                            if self.is_canceled:
+                                return
+                            prepared.append(self.prepare_image(model, index))
+                        batch = [item[1:] for item in prepared
+                                 if item[0] == 'ok']
+                        failures += len(prepared) - len(batch)
+                        if batch:
+                            results = self.generate_batch_results(model, batch)
+                            successes += sum(result[0] is not None
+                                             for result in results)
+                            failures += sum(result[0] is None
+                                            for result in results)
+                    elapsed = perf_counter() - start
+                    if self.is_canceled:
+                        return
+                    rate = successes * 3600 / max(elapsed, 1e-9)
+                    vram = 'VRAM unavailable (remote server not measured)'
+                    if measure_vram:
+                        try:
+                            peak = torch.cuda.max_memory_allocated(cuda_device)
+                            vram = f'peak PyTorch allocated {peak / 1e9:.2f} GB'
+                        except Exception:
+                            vram = 'VRAM unavailable'
+                    elif not model.is_remote_endpoint:
+                        vram = 'VRAM unavailable'
+                    label = (f'batch/concurrency {size}, max image '
+                             f'{"current" if budget is None else f"{budget:.2f} MP"}')
+                    reduced = self.oom_count > initial_oom_count
+                    print(f'{label}: {rate:.0f} images/hour, '
+                          f'{successes} succeeded, {failures} failed, {vram}'
+                          f'{"; OOM reduced batch" if reduced else ""}')
+                    if not failures and not reduced and successes == len(indices):
+                        trials.append((rate, label))
+            if trials:
+                print(f'Benchmark starting-point recommendation: '
+                      f'{max(trials)[1]}. Verify caption quality and repeat '
+                      f'with representative images; this is not a universal optimum.')
+            else:
+                print('No fully successful configuration to recommend.')
+        finally:
+            model.batch_size = original_size
+            model.caption_settings = original_settings
+
     def run_captioning(self):
         model_id = self.caption_settings['model_id']
         model_class = get_model_class(model_id)
@@ -507,6 +685,11 @@ class CaptioningThread(QThread):
         selected_image_indices = list(self.selected_image_indices)
         selected_image_count = len(selected_image_indices)
         are_multiple_images_selected = selected_image_count > 1
+        benchmark = bool(self.caption_settings.get('_benchmark', False))
+        if benchmark and self.is_parallel:
+            self.is_error = True
+            print('Benchmark supports one device at a time; select a single GPU.')
+            return
         if self.is_parallel:
             # One independent model instance per GPU (quantization, Sage,
             # etc. apply per instance); each is cached in its own holder so
@@ -572,6 +755,11 @@ class CaptioningThread(QThread):
             if self.is_canceled:
                 print('Canceled captioning.')
                 return
+            print(f'Stage times (summed worker wall times; may overlap): '
+                  f'preparation (mostly CPU) {self.preparation_seconds:.1f} s, '
+                  f'input processing/generation {self.generation_seconds:.1f} s, '
+                  f'result dispatch {self.application_seconds:.1f} s. '
+                  f'CUDA work may be asynchronous; UI application is not timed.')
             self.clear_console_text_edit_requested.emit()
             captioning_start_datetime = datetime.now()
             captioning_message = model.get_captioning_message(
@@ -582,6 +770,9 @@ class CaptioningThread(QThread):
                 print(f'{type(model).__name__} does not support captioning '
                       f'multiple images at once, so `Batch size` is ignored '
                       f'and images are captioned one at a time.')
+            if benchmark:
+                self.benchmark(model, selected_image_indices)
+                return
             self.caption_images([model], selected_image_indices,
                                 self.caption_settings['caption_position'],
                                 are_multiple_images_selected)

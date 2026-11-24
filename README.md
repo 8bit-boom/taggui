@@ -154,6 +154,46 @@ You can select multiple images to batch generate captions for all of them.
 It can take up to several minutes to download and load a model when you first
 use it, but subsequent generations will be much faster.
 
+### Benchmarking caption speed
+
+Select representative images and click `Benchmark selected images` to try
+configurations on at most the first eight selected images. It discards trial
+captions and does not change tags or saved settings. It compares batch sizes
+up to the current `Batch size`; Qwen also tries half the current maximum
+image size. Cancel using the captioning button. In-flight remote requests
+must finish before cancellation completes.
+
+The console reports throughput, failures and peak PyTorch-allocated VRAM
+on the local CUDA device, when available. It cannot measure server VRAM or
+all GPU memory allocations. The recommendation is a starting point, not a
+universal optimum: image sizes and content, model, hardware, warm-up, and
+other workloads matter. Smaller images may lose detail; inspect caption
+quality and repeat with representative images before changing settings.
+For normal runs the progress bar and console also show preparation,
+input processing/generation and result dispatch wall times. Preparation is
+mostly CPU work, but may include device transfers for non-batched models. It can
+overlap generation; CUDA operations may be asynchronous, and dispatch
+does not include the time the UI takes to apply or save results.
+
+### Remote API (vLLM / SGLang)
+
+Start a compatible vision-language model server separately and select
+`Remote API (vLLM / SGLang)` in the Auto-Captioner. Enter its OpenAI-compatible
+API base URL, optional API key and, if needed, the served model name; an
+empty model name is discovered via the server's `/models` endpoint.
+Set beams to 1. Images are sent to the server, so use a trusted endpoint
+and an appropriately protected connection.
+
+For this model `Batch size` is the maximum number of concurrent requests,
+not a local GPU batch. Start at 1 and increase gradually only if the server
+can handle it. Select a small representative sample, set the largest
+concurrency you want to test, and use the benchmark button to compare 1,
+roughly half, and that limit (capped by the sample size). Check failures,
+server VRAM, latency and caption quality as well as throughput; the best
+concurrency depends on server hardware, model, configuration and load.
+The benchmark sends real requests and may incur server cost. Server-side
+continuous batching, when enabled and supported, can improve utilization.
+
 ### Captioning parameters
 
 `Prompt`: Instructions given to the captioning model.
