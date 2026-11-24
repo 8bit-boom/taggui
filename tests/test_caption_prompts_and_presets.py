@@ -18,7 +18,7 @@ def caption_settings_form(qtbot, isolated_settings):
     form = CaptionSettingsForm()
     widget.setLayout(form)
     qtbot.addWidget(widget)
-    return form
+    yield form
 
 
 def test_prompt_template_data_is_complete():
