@@ -142,6 +142,62 @@ def test_grouping_restores_original_association(qapp, monkeypatch):
     assert emitted == [(i, f'image{i}') for i in range(4)]
 
 
+def test_pilot_stops_before_grouped_window_overshoots(qapp):
+    from PySide6.QtCore import QAbstractListModel, QModelIndex
+
+    images = make_images([(100, 100), (10, 10), (90, 90), (12, 12)])
+    class ImageList(QAbstractListModel):
+        def rowCount(self, parent=QModelIndex()):
+            return len(images)
+
+        def data(self, index, role):
+            return images[index.row()]
+
+    image_list = ImageList()
+    indices = [image_list.index(i) for i in range(4)]
+    thread = CaptioningThread(None, image_list, indices, {}, ', ', None)
+    thread.pilot_run_count = 2
+    thread.continue_after_pilot = False
+    emitted = []
+    prompted = []
+    thread.caption_generated.connect(
+        lambda index, caption, tags: emitted.append(index.row()))
+    thread.pilot_run_finished_requested.connect(prompted.append)
+    thread._run_captioning_loop(BatchModel(2), indices,
+                                CaptionPosition.DO_NOT_ADD, False)
+    assert emitted == [0, 1]
+    assert prompted == [2]
+
+
+def test_cancel_keeps_completed_groups(qapp):
+    from PySide6.QtCore import QAbstractListModel, QModelIndex
+
+    images = make_images([(100, 100), (10, 10), (90, 90), (12, 12)])
+    class ImageList(QAbstractListModel):
+        def rowCount(self, parent=QModelIndex()):
+            return len(images)
+
+        def data(self, index, role):
+            return images[index.row()]
+
+    image_list = ImageList()
+    indices = [image_list.index(i) for i in range(4)]
+    thread = CaptioningThread(None, image_list, indices, {}, ', ', None)
+    model = BatchModel(2)
+    generate = model.generate_captions_batch
+    def cancel_second(inputs, batch):
+        if len(model.calls) == 2:
+            thread.is_canceled = True
+        return generate(inputs, batch)
+    model.generate_captions_batch = cancel_second
+    emitted = []
+    thread.caption_generated.connect(
+        lambda index, caption, tags: emitted.append((index.row(), caption)))
+    thread._run_captioning_loop(model, indices, CaptionPosition.DO_NOT_ADD,
+                                False)
+    assert emitted == [(1, 'image1'), (3, 'image3')]
+
+
 def test_benchmark_discards_results_and_restores_settings(qapp, capsys):
     images = make_images([(10, 10)] * 4)
     thread = make_thread(qapp, images)
@@ -158,6 +214,39 @@ def test_benchmark_discards_results_and_restores_settings(qapp, capsys):
     assert model.batch_size == 4
     assert all(not image.tags for image in images)
     assert thread.captioned_total == 0
+
+
+def test_benchmark_uses_grouped_windows(qapp):
+    images = make_images([(100, 100), (10, 10), (90, 90), (12, 12)])
+    thread = make_thread(qapp, images)
+    model = BatchModel(2)
+    thread.benchmark(model, list(range(4)))
+    assert ['image1', 'image3'] in model.calls
+    assert ['image2', 'image0'] in model.calls
+
+
+def test_remote_benchmark_limits_concurrency_to_user_setting(qapp, capsys):
+    images = make_images([(10, 10)] * 8)
+    thread = make_thread(qapp, images)
+    class RemoteModel(BatchModel):
+        supports_batching = False
+        is_remote_endpoint = True
+        group_similar_images = False
+
+        def get_model_inputs(self, prompt, image):
+            return prompt
+
+        def generate_caption(self, inputs, prompt):
+            return prompt, prompt
+
+    model = RemoteModel(3)
+    thread.benchmark(model, list(range(8)))
+    output = capsys.readouterr().out
+    assert 'batch/concurrency 1' in output
+    assert 'batch/concurrency 3' in output
+    assert 'batch/concurrency 4' not in output
+    assert 'remote server not measured' in output
+    assert model.batch_size == 3
 
 
 def test_benchmark_cancellation_restores_settings(qapp):

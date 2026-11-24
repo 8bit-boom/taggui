@@ -57,6 +57,14 @@ def format_duration(seconds: float) -> str:
     return f'{days:.1f} days'
 
 
+def grouped_indices(batch: list[tuple]) -> list[int]:
+    def image_size_key(index):
+        width, height = batch[index][3].size
+        return width * height, width / max(1, height)
+
+    return sorted(range(len(batch)), key=image_size_key)
+
+
 class ModelCacheHolder:
     """
     A per-device stand-in for the widget-level model cache, used by
@@ -310,7 +318,8 @@ class CaptioningThread(QThread):
     def process_batch(self, model: AutoCaptioningModel, batch: list[tuple],
                       caption_position: CaptionPosition,
                       are_multiple_images_selected: bool,
-                      batch_start_time: float, results=None) -> int:
+                      batch_start_time: float, results=None,
+                      allow_canceled=False) -> int:
         """
         Generate captions for one batch, emit them into the image list, and
         print them to the console. Failed images are recorded and skipped.
@@ -321,7 +330,7 @@ class CaptioningThread(QThread):
             results = self.generate_batch_results(model, batch)
             with self.progress_lock:
                 self.generation_seconds += perf_counter() - generation_start
-        if self.is_canceled:
+        if self.is_canceled and not allow_canceled:
             return 0
         application_start = perf_counter()
         successes = 0
@@ -439,6 +448,10 @@ class CaptioningThread(QThread):
                 window_size = (batch_size * 2 if
                                getattr(model, 'group_similar_images', False)
                                and batch_size > 1 else batch_size)
+                if (self.pilot_run_count and not self.is_parallel
+                        and not self.pilot_run_prompted):
+                    window_size = min(window_size, max(
+                        1, self.pilot_run_count - local_captioned))
                 while pending_preps and len(batch) < window_size:
                     submit_preps()
                     future = pending_preps.popleft()
@@ -463,11 +476,7 @@ class CaptioningThread(QThread):
                 if window_size > batch_size and len(batch) > batch_size:
                     # Sort a bounded window, then restore input order before
                     # sending any results to the UI.
-                    def image_size_key(index):
-                        width, height = batch[index][3].size
-                        return (width * height, width / max(1, height))
-
-                    order = sorted(range(len(batch)), key=image_size_key)
+                    order = grouped_indices(batch)
                     results = [None] * len(batch)
                     offset = 0
                     generation_start = perf_counter()
@@ -475,12 +484,24 @@ class CaptioningThread(QThread):
                         group = order[offset:offset + model.batch_size]
                         generated = self.generate_batch_results(
                             model, [batch[index] for index in group])
+                        if self.is_canceled:
+                            break
                         for index, result in zip(group, generated):
                             results[index] = result
                         offset += len(group)
                     with self.progress_lock:
                         self.generation_seconds += perf_counter() - generation_start
                     if self.is_canceled:
+                        completed = [(item, result) for item, result
+                                     in zip(batch, results)
+                                     if result is not None]
+                        if completed:
+                            self.process_batch(
+                                model, [item for item, _ in completed],
+                                caption_position, are_multiple_images_selected,
+                                batch_start_time,
+                                [result for _, result in completed],
+                                allow_canceled=True)
                         break
                 local_captioned += self.process_batch(
                     model, batch, caption_position,
@@ -592,6 +613,8 @@ class CaptioningThread(QThread):
               '(remote requests already in flight must finish).')
         print('Results depend on image content, model, hardware, server load '
               'and warm-up; compare caption quality before changing settings.')
+        print('Trials prepare images without normal prefetch overlap; '
+              'throughput is not a prediction of a full run.')
         try:
             for budget in budgets:
                 for size in sizes:
@@ -618,11 +641,14 @@ class CaptioningThread(QThread):
                     start = perf_counter()
                     successes = 0
                     failures = 0
-                    for offset in range(0, len(indices), size):
+                    window = (size * 2 if
+                              getattr(model, 'group_similar_images', False)
+                              and size > 1 else size)
+                    for offset in range(0, len(indices), window):
                         if self.is_canceled:
                             return
                         prepared = []
-                        for index in indices[offset:offset + size]:
+                        for index in indices[offset:offset + window]:
                             if self.is_canceled:
                                 return
                             prepared.append(self.prepare_image(model, index))
@@ -630,11 +656,18 @@ class CaptioningThread(QThread):
                                  if item[0] == 'ok']
                         failures += len(prepared) - len(batch)
                         if batch:
-                            results = self.generate_batch_results(model, batch)
-                            successes += sum(result[0] is not None
-                                             for result in results)
-                            failures += sum(result[0] is None
-                                            for result in results)
+                            order = (grouped_indices(batch) if window > size
+                                     else list(range(len(batch))))
+                            position = 0
+                            while position < len(order) and not self.is_canceled:
+                                group = order[position:position + model.batch_size]
+                                results = self.generate_batch_results(
+                                    model, [batch[index] for index in group])
+                                successes += sum(result[0] is not None
+                                                 for result in results)
+                                failures += sum(result[0] is None
+                                                for result in results)
+                                position += len(group)
                     elapsed = perf_counter() - start
                     if self.is_canceled:
                         return
@@ -755,11 +788,6 @@ class CaptioningThread(QThread):
             if self.is_canceled:
                 print('Canceled captioning.')
                 return
-            print(f'Stage times (summed worker wall times; may overlap): '
-                  f'preparation (mostly CPU) {self.preparation_seconds:.1f} s, '
-                  f'input processing/generation {self.generation_seconds:.1f} s, '
-                  f'result dispatch {self.application_seconds:.1f} s. '
-                  f'CUDA work may be asynchronous; UI application is not timed.')
             self.clear_console_text_edit_requested.emit()
             captioning_start_datetime = datetime.now()
             captioning_message = model.get_captioning_message(
@@ -776,6 +804,11 @@ class CaptioningThread(QThread):
             self.caption_images([model], selected_image_indices,
                                 self.caption_settings['caption_position'],
                                 are_multiple_images_selected)
+        print(f'Stage times (summed worker wall times; may overlap): '
+              f'preparation (mostly CPU) {self.preparation_seconds:.1f} s, '
+              f'input processing/generation {self.generation_seconds:.1f} s, '
+              f'result dispatch {self.application_seconds:.1f} s. '
+              f'CUDA work may be asynchronous; UI application is not timed.')
         if self.is_canceled:
             print('Canceled captioning.')
             return

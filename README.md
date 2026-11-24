@@ -169,6 +169,8 @@ all GPU memory allocations. The recommendation is a starting point, not a
 universal optimum: image sizes and content, model, hardware, warm-up, and
 other workloads matter. Smaller images may lose detail; inspect caption
 quality and repeat with representative images before changing settings.
+Trials prepare images without the normal prefetch overlap, so their throughput
+is not a prediction of a full run.
 For normal runs the progress bar and console also show preparation,
 input processing/generation and result dispatch wall times. Preparation is
 mostly CPU work, but may include device transfers for non-batched models. It can
