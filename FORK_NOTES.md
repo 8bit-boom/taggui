@@ -107,7 +107,9 @@ the knobs interact and it's easy to undo one while fixing another.
   time. Batched calls pad with `padding_side='left'` so that slicing the
   generated tokens off by the padded input length is correct for every
   row. If a batched `generate()` hits CUDA OOM, the thread clears the
-  cache and retries the same images one at a time instead of failing.
+  cache and retries smaller batches, retaining the reduced size for the
+  run. Qwen groups similarly sized images within a bounded window, then
+  dispatches captions in their original order.
 - **Prefetch pipeline**: while the GPU generates (or a remote request is
   in flight), a background thread prepares the next images' inputs (PIL
   decode + processor call, or base64 encoding for remote). This overlaps
@@ -184,8 +186,8 @@ run should survive all of that without losing hours of work.
   the image list - retrying them is then just pressing `Start
   Auto-Captioning` again (they're the selection). The run is only marked
   as errored (red alert) if *nothing* succeeded.
-- **OOM resilience**: a batched call that hits CUDA OOM falls back to
-  per-image captioning; a per-image OOM gets one retry at half the pixel
+- **OOM resilience**: a batched call that hits CUDA OOM retries with a
+  smaller batch down to one image; a per-image OOM gets one retry at half the pixel
   budget (`prepare_reduced_inputs()`, Qwen3-VL family) before the image
   is reported as failed.
 - **Skip-already-captioned**: a checkbox that filters out images that
@@ -198,7 +200,14 @@ run should survive all of that without losing hours of work.
   canceling a remote batch takes effect between requests.
 - **ETA/throughput/VRAM in the progress bar**: each batch updates the
   bar's format with done/total, ETA, images/hour, and free/total VRAM
-  (`torch.cuda.mem_get_info`), so the speed knobs can be tuned live.
+  (`torch.cuda.mem_get_info`), plus accumulated preparation, generation
+  and result-dispatch wall times. These stages can overlap; CUDA work may
+  be asynchronous and result dispatch excludes UI application.
+- **Benchmark selected images**: opt-in, cancellable trials of up to eight
+  selected images without applying captions or changing saved settings.
+  Compares batch/concurrency and, for Qwen, maximum image size. Results
+  and local PyTorch peak allocated VRAM are hardware- and sample-specific;
+  server VRAM and caption quality must be checked separately.
 - **Test run**: `Test run (0 = off)` captions the first N images, then
   pauses (the thread polls a flag) and shows a *non-modal* prompt -
   non-modal so the user can review the applied captions in the main

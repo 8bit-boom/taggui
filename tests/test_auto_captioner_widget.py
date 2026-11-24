@@ -115,3 +115,27 @@ def test_start_button_starts_captioning(qtbot, isolated_settings,
     qtbot.waitUntil(lambda: not captioner.captioning_thread.isRunning(),
                     timeout=10000)
     assert not captioner.is_captioning
+
+def test_benchmark_button_does_not_apply_captions(qtbot, isolated_settings,
+                                                   fake_model_class):
+    from models.image_list_model import ImageListModel
+    from widgets.auto_captioner import AutoCaptioner
+
+    image_list_model = ImageListModel(image_list_image_width=200,
+                                      tag_separator=', ')
+    image_list_model.images = [
+        Image(path=Path('benchmark.png'), dimensions=(32, 32), tags=['old'])]
+    captioner = AutoCaptioner(image_list_model, StubImageList(image_list_model))
+    qtbot.addWidget(captioner)
+    emitted = []
+    captioner.caption_generated.connect(lambda *args: emitted.append(args))
+    settings_before = captioner.caption_settings_form.get_caption_settings()
+    qtbot.mouseClick(captioner.benchmark_button, __import__(
+        'PySide6.QtCore', fromlist=['Qt']).Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: not captioner.captioning_thread.isRunning(),
+                    timeout=10000)
+    qtbot.waitUntil(lambda: not captioner.is_captioning, timeout=10000)
+    assert 'recommendation' in captioner.console_text_edit.toPlainText()
+    assert not emitted
+    assert image_list_model.images[0].tags == ['old']
+    assert captioner.caption_settings_form.get_caption_settings() == settings_before
