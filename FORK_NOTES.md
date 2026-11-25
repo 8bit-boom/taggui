@@ -261,6 +261,14 @@ run should survive all of that without losing hours of work.
 - The candidate sweep reuses `CaptioningThread` (model cache included); the
   judge call runs on a worker thread so the UI stays responsive. The cartesian
   product is capped (`MAX_CANDIDATES`) so one click can't launch hundreds of runs.
+- **Unsloth Studio auto-detection**: a "Detect Unsloth Studio" button (and a
+  best-effort pre-fill when the dialog opens) reads the most recent Unsloth
+  backend log to recover the loaded model's llama-server `--port`, `--alias`
+  and `--api-key-file`, then reads the key file, and fills the judge URL
+  (`http://127.0.0.1:<port>/v1`), model and API key automatically. Unsloth
+  serves an OpenAI-compatible `/v1/chat/completions` with a bearer key, so the
+  judge works with it (e.g. a local Qwen3.8-27B GGUF) unchanged. The detected
+  port is dynamic per model load; press Detect again after loading a model.
 
 ### Image format and conversion
 - **AVIF image support** (viewing, thumbnails, dimension reading) via

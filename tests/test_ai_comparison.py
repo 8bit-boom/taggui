@@ -12,7 +12,9 @@ import pytest
 from auto_captioning.ai_comparison import (MAX_CANDIDATES, build_candidates,
                                            build_judge_prompt,
                                            candidate_label,
-                                           parse_judge_response)
+                                           detect_unsloth_endpoint,
+                                           parse_judge_response,
+                                           parse_unsloth_llama_command)
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +186,62 @@ def test_parse_strips_think_block():
             '"ranking": ["A", "B", "C"]}}')
     verdict = parse_judge_response(text, LABELS)
     assert verdict['best'] == 'A'
+
+
+# ---------------------------------------------------------------------------
+# Unsloth Studio auto-detection
+# ---------------------------------------------------------------------------
+
+_UNSLOTH_LINE = (
+    '[123][stdout] {"event": "Starting llama-server: C:\\\\llama-server.exe '
+    '-m C:\\\\models\\\\qwen3.8-27b.gguf --port 62541 --parallel 4 '
+    '--flash-attn on --alias DavidAU/Qwen3.8-27B-GGUF -ngl -1 '
+    '--api-key-file C:\\\\Users\\\\me\\\\.unsloth\\\\studio\\\\auth\\\\llama_api_key_abc '
+    '--mmproj C:\\\\models\\\\mmproj-F16.gguf"}')
+
+
+def test_parse_unsloth_command_extracts_port_key_alias():
+    parsed = parse_unsloth_llama_command(_UNSLOTH_LINE)
+    assert parsed['port'] == 62541
+    assert parsed['alias'] == 'DavidAU/Qwen3.8-27B-GGUF'
+    assert parsed['api_key_file'].endswith('llama_api_key_abc')
+
+
+def test_parse_unsloth_command_non_llama_line_is_none():
+    assert parse_unsloth_llama_command('some other log line') is None
+    assert parse_unsloth_llama_command('llama-server without port') is None
+
+
+def test_detect_unsloth_endpoint_reads_latest_log_and_key(tmp_path):
+    logs = tmp_path / 'logs'
+    logs.mkdir()
+    auth = tmp_path / 'auth'
+    auth.mkdir()
+    key_file = auth / 'llama_api_key_abc'
+    key_file.write_text('secret-key-123\n')
+    line = _UNSLOTH_LINE.replace(
+        'C:\\\\Users\\\\me\\\\.unsloth\\\\studio\\\\auth\\\\llama_api_key_abc',
+        str(key_file).replace('\\', '\\\\'))
+    (logs / 'backend-old.log').write_text('Starting llama-server: --port 1111\n')
+    (logs / 'backend-new.log').write_text(line + '\n')
+    # Make the new log clearly newer.
+    import os
+    os.utime(logs / 'backend-old.log', (1, 1))
+    endpoint = detect_unsloth_endpoint(studio_home=tmp_path)
+    assert endpoint['base_url'] == 'http://127.0.0.1:62541/v1'
+    assert endpoint['api_key'] == 'secret-key-123'
+    assert endpoint['model'] == 'DavidAU/Qwen3.8-27B-GGUF'
+
+
+def test_detect_unsloth_endpoint_missing_home_is_none(tmp_path):
+    assert detect_unsloth_endpoint(studio_home=tmp_path / 'nope') is None
+
+
+def test_detect_unsloth_endpoint_no_llama_log_is_none(tmp_path):
+    logs = tmp_path / 'logs'
+    logs.mkdir()
+    (logs / 'backend-x.log').write_text('nothing here\n')
+    assert detect_unsloth_endpoint(studio_home=tmp_path) is None
 
 
 # ---------------------------------------------------------------------------

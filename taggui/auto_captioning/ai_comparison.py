@@ -247,3 +247,72 @@ def judge_captions(base_url: str, api_key: str | None, model: str | None,
         raise RuntimeError(
             f'The judge server returned an unexpected response: {response}'
         ) from exception
+
+
+# ---------------------------------------------------------------------------
+# Unsloth Studio auto-detection
+# ---------------------------------------------------------------------------
+
+def parse_unsloth_llama_command(line: str) -> dict | None:
+    """
+    Extract the llama-server endpoint details from an Unsloth Studio
+    "Starting llama-server: ..." log line: the port, the API-key file path,
+    and the model alias. Returns None if the line has no --port.
+    """
+    if 'llama-server' not in line or '--port' not in line:
+        return None
+    port_match = re.search(r'--port\s+(\d+)', line)
+    if not port_match:
+        return None
+    key_file_match = re.search(r'--api-key-file\s+(\S+)', line)
+    alias_match = re.search(r'--alias\s+(\S+)', line)
+    return {
+        'port': int(port_match.group(1)),
+        'api_key_file': key_file_match.group(1) if key_file_match else None,
+        'alias': alias_match.group(1) if alias_match else None,
+    }
+
+
+def detect_unsloth_endpoint(studio_home=None) -> dict | None:
+    """
+    Auto-detect the OpenAI-compatible endpoint of the model currently loaded
+    in Unsloth Studio, by reading its most recent backend log (which records
+    the llama-server launch command) and the API-key file it references.
+
+    Returns {'base_url', 'api_key', 'model'} or None if Unsloth Studio / a
+    loaded model could not be found. The detected server may not be running;
+    the caller should verify reachability before relying on it.
+    """
+    from pathlib import Path
+    home = Path(studio_home) if studio_home else Path.home() / '.unsloth' / 'studio'
+    logs_dir = home / 'logs'
+    if not logs_dir.is_dir():
+        return None
+    backend_logs = sorted(logs_dir.glob('backend-*.log'),
+                          key=lambda path: path.stat().st_mtime, reverse=True)
+    for log_path in backend_logs:
+        try:
+            text = log_path.read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            continue
+        # The most recent launch command in the newest log wins.
+        command_lines = [line for line in text.splitlines()
+                         if 'Starting llama-server:' in line]
+        if not command_lines:
+            continue
+        parsed = parse_unsloth_llama_command(command_lines[-1])
+        if not parsed:
+            continue
+        api_key = None
+        if parsed['api_key_file']:
+            try:
+                api_key = Path(parsed['api_key_file']).read_text(
+                    encoding='utf-8').strip()
+            except OSError:
+                api_key = None
+        return {
+            'base_url': f'http://127.0.0.1:{parsed["port"]}/v1',
+            'api_key': api_key or '',
+            'model': parsed['alias'] or '',
+        }
+    return None

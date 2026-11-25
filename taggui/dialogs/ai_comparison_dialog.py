@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout,
                                QTableWidgetItem, QVBoxLayout)
 
 from auto_captioning.ai_comparison import (build_candidates, build_judge_prompt,
+                                           detect_unsloth_endpoint,
                                            judge_captions, parse_judge_response)
 from auto_captioning.captioning_thread import CaptioningThread
 from auto_captioning.generation_presets import GENERATION_PRESETS
@@ -106,6 +107,12 @@ class AIComparisonDialog(QDialog):
         judge_form.addRow('Server URL', self.judge_base_url_edit)
         judge_form.addRow('Judge model', self.judge_model_edit)
         judge_form.addRow('API key (optional)', self.judge_api_key_edit)
+        self.detect_unsloth_button = QPushButton('Detect Unsloth Studio')
+        self.detect_unsloth_button.setToolTip(
+            'Auto-fill the URL, model and API key from the model currently '
+            'loaded in Unsloth Studio (reads its local logs).')
+        self.detect_unsloth_button.clicked.connect(self.detect_unsloth)
+        judge_form.addRow('', self.detect_unsloth_button)
         layout.addWidget(judge_group)
 
         # --- Buttons -------------------------------------------------------
@@ -152,6 +159,12 @@ class AIComparisonDialog(QDialog):
         self.include_current_prompt_check.toggled.connect(
             self.update_candidate_count)
         self.update_candidate_count()
+        # Best-effort: pre-fill the judge from a loaded Unsloth Studio model.
+        endpoint = detect_unsloth_endpoint()
+        if endpoint is not None:
+            self.judge_base_url_edit.setText(endpoint['base_url'])
+            self.judge_model_edit.setText(endpoint['model'])
+            self.judge_api_key_edit.setText(endpoint['api_key'])
 
     # --- Candidate preview -------------------------------------------------
     def _prompt_candidates(self) -> list[str]:
@@ -189,6 +202,20 @@ class AIComparisonDialog(QDialog):
     def update_candidate_count(self):
         count = len(self._prompt_candidates()) * len(self._settings_candidates())
         self.candidate_count_label.setText(f'{count} candidate configurations')
+
+    @Slot()
+    def detect_unsloth(self):
+        endpoint = detect_unsloth_endpoint()
+        if endpoint is None:
+            self.log('Unsloth Studio not detected. Load a model in Unsloth '
+                     'Studio (e.g. Qwen3.8-27B), then press Detect again, or '
+                     'enter the OpenAI SDK base URL and API key it shows.')
+            return
+        self.judge_base_url_edit.setText(endpoint['base_url'])
+        self.judge_model_edit.setText(endpoint['model'])
+        self.judge_api_key_edit.setText(endpoint['api_key'])
+        self.log(f'Detected Unsloth Studio judge: {endpoint["model"]} at '
+                 f'{endpoint["base_url"]}')
 
     def log(self, text: str):
         self.console_text_edit.appendPlainText(text)
