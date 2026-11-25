@@ -16,6 +16,7 @@ class SortOrder(str, Enum):
 class CaptionPosition(str, Enum):
     BEFORE_FIRST_TAG = 'Insert before first tag'
     AFTER_LAST_TAG = 'Insert after last tag'
+    INSERT_AT_INDEX = 'Insert at position'
     OVERWRITE_FIRST_TAG = 'Overwrite first tag'
     OVERWRITE_ALL_TAGS = 'Overwrite all tags'
     DO_NOT_ADD = 'Do not add to tags'

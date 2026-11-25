@@ -15,11 +15,13 @@ from models.image_list_model import ImageListModel
 from utils.enums import CaptionDevice, CaptionPosition
 from utils.image import Image
 from utils.settings import get_tag_separator
+from utils.tag_insertion import TagInsertMode, insert_tags
 from utils.utils import pluralize
 
 
 def add_caption_to_tags(tags: list[str], caption: str,
-                        caption_position: CaptionPosition) -> list[str]:
+                        caption_position: CaptionPosition,
+                        index: int = 0) -> list[str]:
     if caption_position == CaptionPosition.DO_NOT_ADD or not caption:
         return tags
     tag_separator = get_tag_separator()
@@ -31,6 +33,9 @@ def add_caption_to_tags(tags: list[str], caption: str,
         tags[:0] = new_tags
     elif caption_position == CaptionPosition.AFTER_LAST_TAG:
         tags.extend(new_tags)
+    elif caption_position == CaptionPosition.INSERT_AT_INDEX:
+        # Insert between tags at a chosen position (0 = top, len = bottom).
+        return insert_tags(tags, new_tags, TagInsertMode.AT_INDEX, index)
     elif caption_position == CaptionPosition.OVERWRITE_FIRST_TAG:
         if tags:
             tags[:1] = new_tags
@@ -103,6 +108,10 @@ class CaptioningThread(QThread):
         self.image_list_model = image_list_model
         self.selected_image_indices = selected_image_indices
         self.caption_settings = caption_settings
+        # Position used by the "Insert at position" caption position; travels
+        # with the settings so Model Chains steps remember their own index.
+        self.caption_position_index = int(
+            caption_settings.get('caption_position_index', 0) or 0)
         self.tag_separator = tag_separator
         self.models_directory_path = models_directory_path
         self.is_error = False
@@ -286,7 +295,8 @@ class CaptioningThread(QThread):
                                     console_caption or 'Unknown error')
                 continue
             successes += 1
-            tags = add_caption_to_tags(image.tags, caption, caption_position)
+            tags = add_caption_to_tags(image.tags, caption, caption_position,
+                                       self.caption_position_index)
             self.caption_generated.emit(image_index, caption, tags)
             if console_caption is None:
                 console_caption = caption

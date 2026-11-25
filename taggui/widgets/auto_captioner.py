@@ -221,6 +221,16 @@ class CaptionSettingsForm(QVBoxLayout):
         self.caption_position_combo_box = FocusedScrollSettingsComboBox(
             key='caption_position')
         self.caption_position_combo_box.addItems(list(CaptionPosition))
+        # Insertion index for the "Insert at position" caption position:
+        # 0 inserts before the first tag (top), len(tags) after the last
+        # (bottom), anything in between inserts between tags. Only relevant
+        # for that position, so it is disabled otherwise.
+        self.caption_position_index_spin_box = FocusedScrollSettingsSpinBox(
+            key='caption_position_index', default=0, minimum=0, maximum=999)
+        self.caption_position_combo_box.currentTextChanged.connect(
+            self.update_caption_position_index_enabled)
+        self.update_caption_position_index_enabled(
+            self.caption_position_combo_box.currentText())
         # Skip images that already have tags (i.e. were captioned before),
         # so that resuming an interrupted run is one click instead of
         # re-filtering the image list by hand.
@@ -424,6 +434,14 @@ class CaptionSettingsForm(QVBoxLayout):
                 'Where to place the generated caption relative to the '
                 'image\'s existing tags.'),
             self.caption_position_combo_box)
+        basic_settings_form.addRow(
+            label_with_help(
+                'Insert position index',
+                'Used only with "Insert at position". 0 inserts before the '
+                'first tag (top); a value equal to the tag count inserts '
+                'after the last tag (bottom); values in between insert '
+                'between tags. Clamped to the image\'s tag count.'),
+            self.caption_position_index_spin_box)
         basic_settings_form.addRow(
             self.skip_already_captioned_container)
         basic_settings_form.addRow(
@@ -872,6 +890,9 @@ class CaptionSettingsForm(QVBoxLayout):
         self.caption_position_combo_box.setCurrentText(
             caption_settings.get('caption_position',
                                  current['caption_position']))
+        self.caption_position_index_spin_box.setValue(
+            caption_settings.get('caption_position_index',
+                                 current['caption_position_index']))
         self.skip_already_captioned_check_box.setChecked(
             caption_settings.get('skip_already_captioned',
                                  current['skip_already_captioned']))
@@ -978,6 +999,11 @@ class CaptionSettingsForm(QVBoxLayout):
         visual_tokens = round(max_pixels / PIXELS_PER_VISUAL_TOKEN)
         self.pixel_budget_label.setText(
             f'Up to about {visual_tokens} visual tokens per image')
+
+    @Slot(str)
+    def update_caption_position_index_enabled(self, caption_position: str):
+        self.caption_position_index_spin_box.setEnabled(
+            caption_position == CaptionPosition.INSERT_AT_INDEX)
 
     @Slot()
     def insert_prompt_template(self):
@@ -1186,6 +1212,8 @@ class CaptionSettingsForm(QVBoxLayout):
             'prompt': self.prompt_text_edit.toPlainText(),
             'caption_start': self.caption_start_line_edit.text(),
             'caption_position': self.caption_position_combo_box.currentText(),
+            'caption_position_index':
+                self.caption_position_index_spin_box.value(),
             'skip_already_captioned':
                 self.skip_already_captioned_check_box.isChecked(),
             'test_run_image_count':

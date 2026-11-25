@@ -228,6 +228,22 @@ run should survive all of that without losing hours of work.
   (otherwise it falls back to one device with a note). The widget-level
   unload button doesn't cover these (they're freed when the run ends).
 
+### Precise tag insertion
+- **Shared insertion engine** (`utils/tag_insertion.py`): one `insert_tags`
+  helper used by both manual tag entry and auto-captioning, with modes for
+  at top, at bottom, at an arbitrary position *between* tags (index clamped
+  to the tag count), and - relative to the tag list's selection - before /
+  after / replacing the selected tags. Inputs are never mutated.
+- **Auto-caption "Insert at position"**: a new `CaptionPosition` plus an
+  index spin box (enabled only for that position). The index travels with
+  the settings snapshot, so Captioning Profiles and Model Chains steps
+  each remember their own insertion index.
+- **Manual tag insertion control** in the Image Tags editor: an
+  insertion-mode combo (bottom/top/at position/before/after/replace
+  selected) plus an index spin. Single-image entry inserts precisely;
+  multi-image add supports top/bottom/at-position (selection-relative
+  modes fall back to bottom, since there is no per-image selection).
+
 ### Image format and conversion
 - **AVIF image support** (viewing, thumbnails, dimension reading) via
   `pillow-avif-plugin`.
