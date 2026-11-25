@@ -209,6 +209,11 @@ class CaptionSettingsForm(QVBoxLayout):
         self.compare_prompts_button.setToolTip(
             'Caption a few selected images with two different prompts '
             'without applying the captions, to compare their output.')
+        self.ai_compare_button = QPushButton('AI Compare...')
+        self.ai_compare_button.setToolTip(
+            'One click: sweep command prompts and generation settings over '
+            'sample images, then have a local AI judge rank them and suggest '
+            'the best configuration to apply.')
         self.model_chains_button = QPushButton('Model Chains...')
         self.model_chains_button.setToolTip(
             'Build and run a sequence of captioning passes, each with '
@@ -422,6 +427,7 @@ class CaptionSettingsForm(QVBoxLayout):
             'variables.')
         basic_settings_form.addRow(self.prompt_label, self.prompt_text_edit)
         basic_settings_form.addRow('', self.compare_prompts_button)
+        basic_settings_form.addRow('', self.ai_compare_button)
         basic_settings_form.addRow('', self.model_chains_button)
         self.caption_start_label = label_with_help(
             'Start caption with',
@@ -1141,6 +1147,7 @@ class CaptionSettingsForm(QVBoxLayout):
              self.pixel_budget_settings_form_container),
             (not is_wd_tagger_model, self.remove_tag_separators_container),
             (not is_wd_tagger_model, self.compare_prompts_button),
+            (not is_wd_tagger_model, self.ai_compare_button),
             (not is_wd_tagger_model,
              self.skip_already_captioned_container),
             (not is_wd_tagger_model, self.test_run_image_count_spin_box),
@@ -1328,6 +1335,8 @@ class AutoCaptioner(QDockWidget):
             self.unload_model)
         self.caption_settings_form.compare_prompts_button.clicked.connect(
             self.compare_prompts)
+        self.caption_settings_form.ai_compare_button.clicked.connect(
+            self.show_ai_comparison_dialog)
         self.caption_settings_form.model_chains_button.clicked.connect(
             self.show_model_chains_dialog)
         scroll_area = QScrollArea()
@@ -1377,6 +1386,18 @@ class AutoCaptioner(QDockWidget):
                 'before comparing prompts.')
             return
         dialog = PromptComparisonDialog(self)
+        dialog.exec()
+
+    @Slot()
+    def show_ai_comparison_dialog(self):
+        if self.is_captioning:
+            QMessageBox.warning(
+                self, 'Auto-Captioner Busy',
+                'Captioning is already running. Wait for it to finish '
+                'before running an AI comparison.')
+            return
+        from dialogs.ai_comparison_dialog import AIComparisonDialog
+        dialog = AIComparisonDialog(self)
         dialog.exec()
 
     @Slot()

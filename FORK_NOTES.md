@@ -244,6 +244,24 @@ run should survive all of that without losing hours of work.
   multi-image add supports top/bottom/at-position (selection-relative
   modes fall back to bottom, since there is no per-image selection).
 
+### One-button AI comparison of prompts and settings
+- **AI Compare...** button in the Auto-Captioner (`dialogs/ai_comparison_dialog.py`,
+  logic in `auto_captioning/ai_comparison.py`). One click sweeps candidate
+  configurations (command-prompt candidates x generation-preset candidates)
+  over a few sample images, captioning each without applying the captions.
+- A **judge LLM on a local OpenAI-compatible server** (Ollama / vLLM /
+  llama.cpp, e.g. Qwen3.8-27B or Gemma 4; configurable URL/model/key in the
+  dialog) scores and ranks the candidates and explains its choice. The judge
+  response is parsed defensively (tolerates code fences, trailing prose,
+  think blocks, and malformed JSON via a fallback ranking).
+- Shows a ranked report (scores + reasoning) plus an image x candidate caption
+  table, and an **Apply Winner** button that loads the winning prompt and
+  generation parameters into the form. If the judge is unreachable, the
+  caption table is still shown for manual comparison.
+- The candidate sweep reuses `CaptioningThread` (model cache included); the
+  judge call runs on a worker thread so the UI stays responsive. The cartesian
+  product is capped (`MAX_CANDIDATES`) so one click can't launch hundreds of runs.
+
 ### Image format and conversion
 - **AVIF image support** (viewing, thumbnails, dimension reading) via
   `pillow-avif-plugin`.
