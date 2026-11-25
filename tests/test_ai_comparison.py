@@ -327,6 +327,8 @@ def test_ai_comparison_end_to_end(captioner, qtbot, monkeypatch):
 
     dialog = AIComparisonDialog(captioner)
     qtbot.addWidget(dialog)
+    # Force the server judge path so the fake judge_captions is used.
+    dialog.judge_source_combo.setCurrentText('OpenAI server (URL)')
     # Two prompt candidates (current + one purpose), current settings only.
     dialog.include_current_prompt_check.setChecked(True)
     captioner.caption_settings_form.prompt_text_edit.setPlainText('current prompt')
@@ -365,6 +367,7 @@ def test_ai_comparison_judge_failure_still_shows_table(captioner, qtbot,
     monkeypatch.setattr(dialog_module, 'judge_captions', failing_judge)
     dialog = AIComparisonDialog(captioner)
     qtbot.addWidget(dialog)
+    dialog.judge_source_combo.setCurrentText('OpenAI server (URL)')
     dialog.include_current_prompt_check.setChecked(True)
     for purpose, check in dialog.purpose_checks.items():
         check.setChecked(purpose == 'General')

@@ -1,15 +1,18 @@
 import threading
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFormLayout,
-                               QGroupBox, QHBoxLayout, QHeaderView, QLabel,
-                               QLineEdit, QMessageBox, QPlainTextEdit,
-                               QPushButton, QSpinBox, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog,
+                               QFormLayout, QGroupBox, QHBoxLayout,
+                               QHeaderView, QLabel, QLineEdit, QMessageBox,
+                               QPlainTextEdit, QPushButton, QSpinBox,
+                               QTableWidget, QTableWidgetItem, QVBoxLayout,
+                               QWidget)
 
 from auto_captioning.ai_comparison import (build_candidates, build_judge_prompt,
                                            detect_unsloth_endpoint,
                                            judge_captions, parse_judge_response)
+from auto_captioning import local_llama
 from auto_captioning.captioning_thread import CaptioningThread
 from auto_captioning.generation_presets import GENERATION_PRESETS
 from auto_captioning.prompt_templates import (PROMPT_TEMPLATES,
@@ -96,24 +99,64 @@ class AIComparisonDialog(QDialog):
         layout.addWidget(candidates_group)
 
         # --- Judge configuration -------------------------------------------
-        judge_group = QGroupBox('AI judge (local OpenAI-compatible server)')
-        judge_form = QFormLayout(judge_group)
+        judge_group = QGroupBox('AI judge')
+        judge_layout = QVBoxLayout(judge_group)
+        source_row = QHBoxLayout()
+        source_row.addWidget(QLabel('Judge source:'))
+        self.judge_source_combo = QComboBox()
+        self.judge_source_combo.addItems(
+            ['Local GGUF (in-app, no server)', 'OpenAI server (URL)'])
+        source_row.addWidget(self.judge_source_combo)
+        source_row.addStretch()
+        judge_layout.addLayout(source_row)
+
+        # Local in-app GGUF widgets (no server / URL / API key needed).
+        self.local_judge_widget = QWidget()
+        local_form = QFormLayout(self.local_judge_widget)
+        self.gguf_combo = QComboBox()
+        self.gguf_combo.setEditable(True)
+        self.gguf_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.gguf_combo.setMinimumContentsLength(20)
+        gguf_row = QHBoxLayout()
+        gguf_row.addWidget(self.gguf_combo, stretch=1)
+        self.browse_gguf_button = QPushButton('Browse...')
+        self.browse_gguf_button.clicked.connect(self.browse_gguf)
+        gguf_row.addWidget(self.browse_gguf_button)
+        local_form.addRow('GGUF model', gguf_row)
+        self.gpu_layers_spin = QSpinBox()
+        self.gpu_layers_spin.setRange(-1, 999)
+        self.gpu_layers_spin.setValue(-1)
+        self.gpu_layers_spin.setToolTip('-1 offloads all layers to the GPU.')
+        local_form.addRow('GPU layers', self.gpu_layers_spin)
+        self.local_ctx_spin = QSpinBox()
+        self.local_ctx_spin.setRange(512, 131072)
+        self.local_ctx_spin.setValue(8192)
+        local_form.addRow('Context length', self.local_ctx_spin)
+        judge_layout.addWidget(self.local_judge_widget)
+
+        # OpenAI-server widgets (URL / model / key, e.g. Unsloth / vLLM).
+        self.server_judge_widget = QWidget()
+        server_form = QFormLayout(self.server_judge_widget)
         self.judge_base_url_edit = QLineEdit('http://127.0.0.1:8000/v1')
         self.judge_model_edit = QLineEdit()
         self.judge_model_edit.setPlaceholderText(
             'e.g. qwen3.8:27b / gemma-4 (blank = auto-detect)')
         self.judge_api_key_edit = QLineEdit()
         self.judge_api_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        judge_form.addRow('Server URL', self.judge_base_url_edit)
-        judge_form.addRow('Judge model', self.judge_model_edit)
-        judge_form.addRow('API key (optional)', self.judge_api_key_edit)
+        server_form.addRow('Server URL', self.judge_base_url_edit)
+        server_form.addRow('Judge model', self.judge_model_edit)
+        server_form.addRow('API key (optional)', self.judge_api_key_edit)
         self.detect_unsloth_button = QPushButton('Detect Unsloth Studio')
         self.detect_unsloth_button.setToolTip(
             'Auto-fill the URL, model and API key from the model currently '
             'loaded in Unsloth Studio (reads its local logs).')
         self.detect_unsloth_button.clicked.connect(self.detect_unsloth)
-        judge_form.addRow('', self.detect_unsloth_button)
+        server_form.addRow('', self.detect_unsloth_button)
+        judge_layout.addWidget(self.server_judge_widget)
         layout.addWidget(judge_group)
+        self.judge_source_combo.currentTextChanged.connect(
+            self.update_judge_source_visibility)
 
         # --- Buttons -------------------------------------------------------
         self.run_button = QPushButton('Run AI Comparison')
@@ -159,12 +202,46 @@ class AIComparisonDialog(QDialog):
         self.include_current_prompt_check.toggled.connect(
             self.update_candidate_count)
         self.update_candidate_count()
-        # Best-effort: pre-fill the judge from a loaded Unsloth Studio model.
+        # Best-effort: pre-fill the server judge from a loaded Unsloth model.
         endpoint = detect_unsloth_endpoint()
         if endpoint is not None:
             self.judge_base_url_edit.setText(endpoint['base_url'])
             self.judge_model_edit.setText(endpoint['model'])
             self.judge_api_key_edit.setText(endpoint['api_key'])
+        # Populate the in-app GGUF list and prefer it when a model is found,
+        # so the judge works with nothing but this app (no server needed).
+        self.refresh_gguf_list()
+        if local_llama.is_available() and self.gguf_combo.count() > 0:
+            self.judge_source_combo.setCurrentText(
+                'Local GGUF (in-app, no server)')
+        self.update_judge_source_visibility(
+            self.judge_source_combo.currentText())
+
+    # --- Judge source ------------------------------------------------------
+    @Slot(str)
+    def update_judge_source_visibility(self, source: str):
+        is_local = source.startswith('Local GGUF')
+        self.local_judge_widget.setVisible(is_local)
+        self.server_judge_widget.setVisible(not is_local)
+
+    @Slot()
+    def refresh_gguf_list(self):
+        current = self.gguf_combo.currentText()
+        self.gguf_combo.clear()
+        models_dir = self.caption_settings_form.settings.value(
+            'models_directory_path', defaultValue='', type=str)
+        extra = [Path(models_dir)] if models_dir else []
+        for path in local_llama.discover_gguf_models(extra):
+            self.gguf_combo.addItem(str(path))
+        if current:
+            self.gguf_combo.setCurrentText(current)
+
+    @Slot()
+    def browse_gguf(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, 'Select a GGUF model', '', 'GGUF models (*.gguf)')
+        if path:
+            self.gguf_combo.setCurrentText(path)
 
     # --- Candidate preview -------------------------------------------------
     def _prompt_candidates(self) -> list[str]:
@@ -295,22 +372,38 @@ class AIComparisonDialog(QDialog):
         self.start_judging()
 
     def start_judging(self):
-        self.log('Asking the AI judge to rank the candidates...')
         results = [{'image': name, 'captions': self.captions[(name, row)]}
                    for (name, row) in self.image_order]
         target = self.target_model_combo.currentText()
         judge_prompt = build_judge_prompt(self.candidates, results,
                                           f'{target} training captions')
-        base_url = self.judge_base_url_edit.text().strip()
-        model = self.judge_model_edit.text().strip() or None
-        api_key = self.judge_api_key_edit.text().strip() or None
+        is_local = self.judge_source_combo.currentText().startswith('Local GGUF')
+        if is_local:
+            model_path = self.gguf_combo.currentText().strip()
+            n_gpu_layers = self.gpu_layers_spin.value()
+            n_ctx = self.local_ctx_spin.value()
+            self.log(f'Asking the in-app local judge ({Path(model_path).name}) '
+                     f'to rank the candidates...')
 
-        def worker():
-            try:
-                text = judge_captions(base_url, api_key, model, judge_prompt)
-                self.judge_finished.emit(text, '')
-            except Exception as exception:  # noqa: BLE001 - report to the UI
-                self.judge_finished.emit('', str(exception))
+            def worker():
+                try:
+                    text = local_llama.judge_captions_local(
+                        model_path, judge_prompt, n_gpu_layers, n_ctx)
+                    self.judge_finished.emit(text, '')
+                except Exception as exception:  # noqa: BLE001 - report to UI
+                    self.judge_finished.emit('', str(exception))
+        else:
+            base_url = self.judge_base_url_edit.text().strip()
+            model = self.judge_model_edit.text().strip() or None
+            api_key = self.judge_api_key_edit.text().strip() or None
+            self.log('Asking the AI judge to rank the candidates...')
+
+            def worker():
+                try:
+                    text = judge_captions(base_url, api_key, model, judge_prompt)
+                    self.judge_finished.emit(text, '')
+                except Exception as exception:  # noqa: BLE001 - report to UI
+                    self.judge_finished.emit('', str(exception))
 
         threading.Thread(target=worker, daemon=True).start()
 

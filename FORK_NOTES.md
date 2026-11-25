@@ -270,6 +270,25 @@ run should survive all of that without losing hours of work.
   judge works with it (e.g. a local Qwen3.8-27B GGUF) unchanged. The detected
   port is dynamic per model load; press Detect again after loading a model.
 
+### In-app local models (no server, URL, or API key)
+- **Embedded llama.cpp** via `llama-cpp-python` (`auto_captioning/local_llama.py`)
+  runs GGUF models directly inside the app. The AI comparison judge can use a
+  local GGUF (e.g. a Qwen3.8-27B or Gemma 4 GGUF) with nothing but this app -
+  no external server. The dialog's judge source defaults to "Local GGUF
+  (in-app)" when a model is found, listing GGUFs discovered in the Hugging
+  Face cache / models directory, with a Browse button, GPU-layers and
+  context-length controls. The OpenAI-server source (URL/key, incl. Unsloth
+  auto-detect) remains available as an alternative.
+- Loaded models are cached by (path, GPU layers, context) so repeated judge
+  runs reuse the loaded weights; `release_local_models()` frees them.
+- The prebuilt CUDA wheel needs the CUDA 12 runtime DLLs; on Windows
+  `ensure_cuda_dll_path()` adds torch's bundled CUDA 12 DLL directory to the
+  search path before importing `llama_cpp`, so it loads without a separate
+  CUDA install (verified on an RTX 5090). `requirements.txt` pins the cu124
+  Windows wheel (and the PyPI build elsewhere).
+- Captioning itself already runs locally in-app via transformers; this adds
+  server-free local inference for the judge (and any GGUF text model).
+
 ### Image format and conversion
 - **AVIF image support** (viewing, thumbnails, dimension reading) via
   `pillow-avif-plugin`.
