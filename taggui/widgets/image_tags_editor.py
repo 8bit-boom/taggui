@@ -2,14 +2,17 @@ from PySide6.QtCore import (QItemSelectionModel, QModelIndex, QStringListModel,
                             QTimer, Qt, Signal, Slot)
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (QAbstractItemView, QCompleter, QDockWidget,
-                               QLabel, QLineEdit, QListView, QMessageBox,
-                               QVBoxLayout, QWidget)
+                               QHBoxLayout, QLabel, QLineEdit, QListView,
+                               QMessageBox, QVBoxLayout, QWidget)
 from transformers import PreTrainedTokenizerBase
 
 from models.proxy_image_list_model import ProxyImageListModel
 from models.tag_counter_model import DanbooruTagCompletionModel
 from utils.image import Image
 from utils.settings import DEFAULT_SETTINGS, get_settings
+from utils.settings_widgets import (FocusedScrollSettingsComboBox,
+                                    FocusedScrollSettingsSpinBox)
+from utils.tag_insertion import TagInsertMode, insert_tags
 from utils.text_edit_item_delegate import TextEditItemDelegate
 from utils.utils import get_confirmation_dialog_reply
 from widgets.image_list import ImageList
@@ -18,7 +21,7 @@ MAX_TOKEN_COUNT = 75
 
 
 class TagInputBox(QLineEdit):
-    tags_addition_requested = Signal(list, list)
+    tags_addition_requested = Signal(list, list, str, int)
 
     def __init__(self, image_tag_list_model: QStringListModel,
                  tag_completion_model: DanbooruTagCompletionModel,
@@ -27,6 +30,12 @@ class TagInputBox(QLineEdit):
         self.image_tag_list_model = image_tag_list_model
         self.image_list = image_list
         self.tag_separator = tag_separator
+        # Set by ImageTagsEditor once its insertion controls exist: where to
+        # place manually entered tags (top/bottom/at position/relative to the
+        # tag list's selection) and the index for "at position".
+        self.insert_mode_combo = None
+        self.insert_index_spin = None
+        self.image_tags_list = None
 
         self.setPlaceholderText('Add Tag')
         self.setStyleSheet('padding: 8px;')
@@ -63,19 +72,33 @@ class TagInputBox(QLineEdit):
         if self.completer is not None:
             self.completer.popup().hide()
 
+    def _insertion_settings(self) -> tuple[TagInsertMode, int, list[int]]:
+        mode = TagInsertMode.BOTTOM
+        index = 0
+        selected_rows: list[int] = []
+        if self.insert_mode_combo is not None:
+            mode = TagInsertMode(self.insert_mode_combo.currentText())
+        if self.insert_index_spin is not None:
+            index = self.insert_index_spin.value()
+        if self.image_tags_list is not None:
+            selected_rows = [model_index.row() for model_index
+                             in self.image_tags_list.selectedIndexes()]
+        return mode, index, selected_rows
+
     def add_tag(self, tag: str):
         if not tag:
             return
         tags = tag.split(self.tag_separator)
         selected_image_indices = self.image_list.get_selected_image_indices()
         selected_image_count = len(selected_image_indices)
+        mode, index, selected_rows = self._insertion_settings()
         if len(tags) == 1 and selected_image_count == 1:
-            # Add an empty tag and set it to the new tag.
-            self.image_tag_list_model.insertRow(
-                self.image_tag_list_model.rowCount())
-            new_tag_index = self.image_tag_list_model.index(
-                self.image_tag_list_model.rowCount() - 1)
-            self.image_tag_list_model.setData(new_tag_index, tag)
+            # Insert the single tag at the chosen position in the current
+            # image's tag list (top/bottom/at position/relative to selection).
+            current_tags = self.image_tag_list_model.stringList()
+            new_tags = insert_tags(current_tags, tags, mode, index,
+                                   selected_rows)
+            self.image_tag_list_model.setStringList(new_tags)
             return
         if selected_image_count > 1:
             if len(tags) > 1:
@@ -88,7 +111,8 @@ class TagInputBox(QLineEdit):
                                                   question=question)
             if reply != QMessageBox.StandardButton.Yes:
                 return
-        self.tags_addition_requested.emit(tags, selected_image_indices)
+        self.tags_addition_requested.emit(tags, selected_image_indices,
+                                          mode.value, index)
 
 
 class ImageTagsList(QListView):
@@ -154,11 +178,35 @@ class ImageTagsEditor(QDockWidget):
                                          tag_completion_model, image_list,
                                          tag_separator)
         self.image_tags_list = ImageTagsList(self.image_tag_list_model)
+        # Where manually entered tags are placed: at the top, bottom, an
+        # explicit position between tags, or relative to the tag list's
+        # current selection. The index spin applies only to "At position".
+        self.insert_mode_combo = FocusedScrollSettingsComboBox(
+            key='manual_tag_insert_mode')
+        self.insert_mode_combo.addItems([mode.value for mode in TagInsertMode])
+        self.insert_mode_combo.setCurrentText(TagInsertMode.BOTTOM.value)
+        self.insert_index_spin = FocusedScrollSettingsSpinBox(
+            key='manual_tag_insert_index', default=0, minimum=0, maximum=999)
+        self.insert_mode_combo.currentTextChanged.connect(
+            lambda mode: self.insert_index_spin.setEnabled(
+                mode == TagInsertMode.AT_INDEX))
+        self.insert_index_spin.setEnabled(
+            self.insert_mode_combo.currentText() == TagInsertMode.AT_INDEX)
+        # Give the input box access to the insertion controls and the tag
+        # list's selection so it can insert precisely.
+        self.tag_input_box.insert_mode_combo = self.insert_mode_combo
+        self.tag_input_box.insert_index_spin = self.insert_index_spin
+        self.tag_input_box.image_tags_list = self.image_tags_list
         self.token_count_label = QLabel()
         # A container widget is required to use a layout with a `QDockWidget`.
         container = QWidget()
         layout = QVBoxLayout(container)
         layout.addWidget(self.tag_input_box)
+        insert_row = QHBoxLayout()
+        insert_row.addWidget(QLabel('Insert:'))
+        insert_row.addWidget(self.insert_mode_combo, stretch=1)
+        insert_row.addWidget(self.insert_index_spin)
+        layout.addLayout(insert_row)
         layout.addWidget(self.image_tags_list)
         layout.addWidget(self.token_count_label)
         self.setWidget(container)

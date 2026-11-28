@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from utils.image import Image, get_image_dimensions, load_pixmap
 from utils.settings import DEFAULT_SETTINGS, get_settings
+from utils.tag_insertion import TagInsertMode, insert_tags
 from utils.utils import get_confirmation_dialog_reply, pluralize
 
 UNDO_STACK_SIZE = 32
@@ -474,16 +475,23 @@ class ImageListModel(QAbstractListModel):
         self.write_image_tags_to_disk(image)
 
     @Slot(list, list)
-    def add_tags(self, tags: list[str], image_indices: list[QModelIndex]):
-        """Add one or more tags to one or more images."""
+    @Slot(list, list, str, int)
+    def add_tags(self, tags: list[str], image_indices: list[QModelIndex],
+                 mode: TagInsertMode = TagInsertMode.BOTTOM, index: int = 0):
+        """Add one or more tags to one or more images at a chosen position."""
         if not image_indices:
             return
         action_name = f'Add {pluralize("Tag", len(tags))}'
         should_ask_for_confirmation = len(image_indices) > 1
         self.add_to_undo_stack(action_name, should_ask_for_confirmation)
+        # Selection-relative modes need a per-image tag selection, which does
+        # not exist when adding to several images at once; fall back to bottom.
+        if mode in (TagInsertMode.BEFORE_SELECTED, TagInsertMode.AFTER_SELECTED,
+                    TagInsertMode.REPLACE_SELECTED):
+            mode = TagInsertMode.BOTTOM
         for image_index in image_indices:
             image: Image = self.data(image_index, Qt.ItemDataRole.UserRole)
-            image.tags.extend(tags)
+            image.tags = insert_tags(image.tags, tags, mode, index)
             self.write_image_tags_to_disk(image)
         min_image_index = min(image_indices, key=lambda index: index.row())
         max_image_index = max(image_indices, key=lambda index: index.row())

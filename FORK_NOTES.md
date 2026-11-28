@@ -228,6 +228,67 @@ run should survive all of that without losing hours of work.
   (otherwise it falls back to one device with a note). The widget-level
   unload button doesn't cover these (they're freed when the run ends).
 
+### Precise tag insertion
+- **Shared insertion engine** (`utils/tag_insertion.py`): one `insert_tags`
+  helper used by both manual tag entry and auto-captioning, with modes for
+  at top, at bottom, at an arbitrary position *between* tags (index clamped
+  to the tag count), and - relative to the tag list's selection - before /
+  after / replacing the selected tags. Inputs are never mutated.
+- **Auto-caption "Insert at position"**: a new `CaptionPosition` plus an
+  index spin box (enabled only for that position). The index travels with
+  the settings snapshot, so Captioning Profiles and Model Chains steps
+  each remember their own insertion index.
+- **Manual tag insertion control** in the Image Tags editor: an
+  insertion-mode combo (bottom/top/at position/before/after/replace
+  selected) plus an index spin. Single-image entry inserts precisely;
+  multi-image add supports top/bottom/at-position (selection-relative
+  modes fall back to bottom, since there is no per-image selection).
+
+### One-button AI comparison of prompts and settings
+- **AI Compare...** button in the Auto-Captioner (`dialogs/ai_comparison_dialog.py`,
+  logic in `auto_captioning/ai_comparison.py`). One click sweeps candidate
+  configurations (command-prompt candidates x generation-preset candidates)
+  over a few sample images, captioning each without applying the captions.
+- A **judge LLM on a local OpenAI-compatible server** (Ollama / vLLM /
+  llama.cpp, e.g. Qwen3.8-27B or Gemma 4; configurable URL/model/key in the
+  dialog) scores and ranks the candidates and explains its choice. The judge
+  response is parsed defensively (tolerates code fences, trailing prose,
+  think blocks, and malformed JSON via a fallback ranking).
+- Shows a ranked report (scores + reasoning) plus an image x candidate caption
+  table, and an **Apply Winner** button that loads the winning prompt and
+  generation parameters into the form. If the judge is unreachable, the
+  caption table is still shown for manual comparison.
+- The candidate sweep reuses `CaptioningThread` (model cache included); the
+  judge call runs on a worker thread so the UI stays responsive. The cartesian
+  product is capped (`MAX_CANDIDATES`) so one click can't launch hundreds of runs.
+- **Unsloth Studio auto-detection**: a "Detect Unsloth Studio" button (and a
+  best-effort pre-fill when the dialog opens) reads the most recent Unsloth
+  backend log to recover the loaded model's llama-server `--port`, `--alias`
+  and `--api-key-file`, then reads the key file, and fills the judge URL
+  (`http://127.0.0.1:<port>/v1`), model and API key automatically. Unsloth
+  serves an OpenAI-compatible `/v1/chat/completions` with a bearer key, so the
+  judge works with it (e.g. a local Qwen3.8-27B GGUF) unchanged. The detected
+  port is dynamic per model load; press Detect again after loading a model.
+
+### In-app local models (no server, URL, or API key)
+- **Embedded llama.cpp** via `llama-cpp-python` (`auto_captioning/local_llama.py`)
+  runs GGUF models directly inside the app. The AI comparison judge can use a
+  local GGUF (e.g. a Qwen3.8-27B or Gemma 4 GGUF) with nothing but this app -
+  no external server. The dialog's judge source defaults to "Local GGUF
+  (in-app)" when a model is found, listing GGUFs discovered in the Hugging
+  Face cache / models directory, with a Browse button, GPU-layers and
+  context-length controls. The OpenAI-server source (URL/key, incl. Unsloth
+  auto-detect) remains available as an alternative.
+- Loaded models are cached by (path, GPU layers, context) so repeated judge
+  runs reuse the loaded weights; `release_local_models()` frees them.
+- The prebuilt CUDA wheel needs the CUDA 12 runtime DLLs; on Windows
+  `ensure_cuda_dll_path()` adds torch's bundled CUDA 12 DLL directory to the
+  search path before importing `llama_cpp`, so it loads without a separate
+  CUDA install (verified on an RTX 5090). `requirements.txt` pins the cu124
+  Windows wheel (and the PyPI build elsewhere).
+- Captioning itself already runs locally in-app via transformers; this adds
+  server-free local inference for the judge (and any GGUF text model).
+
 ### Image format and conversion
 - **AVIF image support** (viewing, thumbnails, dimension reading) via
   `pillow-avif-plugin`.

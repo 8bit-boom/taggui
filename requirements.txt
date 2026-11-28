@@ -42,3 +42,10 @@ sageattention==1.0.6; platform_system == "Linux"
 https://github.com/woct0rdho/SageAttention/releases/download/v2.1.1-windows/sageattention-2.1.1%2Bcu128torch2.8.0-cp312-cp312-win_amd64.whl; platform_system == "Windows" and python_version == "3.12"
 https://github.com/woct0rdho/SageAttention/releases/download/v2.1.1-windows/sageattention-2.1.1%2Bcu128torch2.8.0-cp311-cp311-win_amd64.whl; platform_system == "Windows" and python_version == "3.11"
 triton-windows==3.5.0.post21; platform_system == "Windows"
+
+# In-app local GGUF inference (embedded llama.cpp) for the AI comparison judge
+# and running local models without any server/URL/API key. The Windows wheel
+# bundles the CUDA 12.4 runtime; the app adds torch's CUDA 12 DLL directory to
+# the search path so it loads without a separate CUDA install.
+https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.37-cu124/llama_cpp_python-0.3.37-py3-none-win_amd64.whl; platform_system == "Windows"
+llama-cpp-python==0.3.37; platform_system != "Windows"

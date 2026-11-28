@@ -209,6 +209,11 @@ class CaptionSettingsForm(QVBoxLayout):
         self.compare_prompts_button.setToolTip(
             'Caption a few selected images with two different prompts '
             'without applying the captions, to compare their output.')
+        self.ai_compare_button = QPushButton('AI Compare...')
+        self.ai_compare_button.setToolTip(
+            'One click: sweep command prompts and generation settings over '
+            'sample images, then have a local AI judge rank them and suggest '
+            'the best configuration to apply.')
         self.model_chains_button = QPushButton('Model Chains...')
         self.model_chains_button.setToolTip(
             'Build and run a sequence of captioning passes, each with '
@@ -221,6 +226,16 @@ class CaptionSettingsForm(QVBoxLayout):
         self.caption_position_combo_box = FocusedScrollSettingsComboBox(
             key='caption_position')
         self.caption_position_combo_box.addItems(list(CaptionPosition))
+        # Insertion index for the "Insert at position" caption position:
+        # 0 inserts before the first tag (top), len(tags) after the last
+        # (bottom), anything in between inserts between tags. Only relevant
+        # for that position, so it is disabled otherwise.
+        self.caption_position_index_spin_box = FocusedScrollSettingsSpinBox(
+            key='caption_position_index', default=0, minimum=0, maximum=999)
+        self.caption_position_combo_box.currentTextChanged.connect(
+            self.update_caption_position_index_enabled)
+        self.update_caption_position_index_enabled(
+            self.caption_position_combo_box.currentText())
         # Skip images that already have tags (i.e. were captioned before),
         # so that resuming an interrupted run is one click instead of
         # re-filtering the image list by hand.
@@ -412,6 +427,7 @@ class CaptionSettingsForm(QVBoxLayout):
             'variables.')
         basic_settings_form.addRow(self.prompt_label, self.prompt_text_edit)
         basic_settings_form.addRow('', self.compare_prompts_button)
+        basic_settings_form.addRow('', self.ai_compare_button)
         basic_settings_form.addRow('', self.model_chains_button)
         self.caption_start_label = label_with_help(
             'Start caption with',
@@ -424,6 +440,14 @@ class CaptionSettingsForm(QVBoxLayout):
                 'Where to place the generated caption relative to the '
                 'image\'s existing tags.'),
             self.caption_position_combo_box)
+        basic_settings_form.addRow(
+            label_with_help(
+                'Insert position index',
+                'Used only with "Insert at position". 0 inserts before the '
+                'first tag (top); a value equal to the tag count inserts '
+                'after the last tag (bottom); values in between insert '
+                'between tags. Clamped to the image\'s tag count.'),
+            self.caption_position_index_spin_box)
         basic_settings_form.addRow(
             self.skip_already_captioned_container)
         basic_settings_form.addRow(
@@ -872,6 +896,9 @@ class CaptionSettingsForm(QVBoxLayout):
         self.caption_position_combo_box.setCurrentText(
             caption_settings.get('caption_position',
                                  current['caption_position']))
+        self.caption_position_index_spin_box.setValue(
+            caption_settings.get('caption_position_index',
+                                 current['caption_position_index']))
         self.skip_already_captioned_check_box.setChecked(
             caption_settings.get('skip_already_captioned',
                                  current['skip_already_captioned']))
@@ -978,6 +1005,11 @@ class CaptionSettingsForm(QVBoxLayout):
         visual_tokens = round(max_pixels / PIXELS_PER_VISUAL_TOKEN)
         self.pixel_budget_label.setText(
             f'Up to about {visual_tokens} visual tokens per image')
+
+    @Slot(str)
+    def update_caption_position_index_enabled(self, caption_position: str):
+        self.caption_position_index_spin_box.setEnabled(
+            caption_position == CaptionPosition.INSERT_AT_INDEX)
 
     @Slot()
     def insert_prompt_template(self):
@@ -1115,6 +1147,7 @@ class CaptionSettingsForm(QVBoxLayout):
              self.pixel_budget_settings_form_container),
             (not is_wd_tagger_model, self.remove_tag_separators_container),
             (not is_wd_tagger_model, self.compare_prompts_button),
+            (not is_wd_tagger_model, self.ai_compare_button),
             (not is_wd_tagger_model,
              self.skip_already_captioned_container),
             (not is_wd_tagger_model, self.test_run_image_count_spin_box),
@@ -1186,6 +1219,8 @@ class CaptionSettingsForm(QVBoxLayout):
             'prompt': self.prompt_text_edit.toPlainText(),
             'caption_start': self.caption_start_line_edit.text(),
             'caption_position': self.caption_position_combo_box.currentText(),
+            'caption_position_index':
+                self.caption_position_index_spin_box.value(),
             'skip_already_captioned':
                 self.skip_already_captioned_check_box.isChecked(),
             'test_run_image_count':
@@ -1300,6 +1335,8 @@ class AutoCaptioner(QDockWidget):
             self.unload_model)
         self.caption_settings_form.compare_prompts_button.clicked.connect(
             self.compare_prompts)
+        self.caption_settings_form.ai_compare_button.clicked.connect(
+            self.show_ai_comparison_dialog)
         self.caption_settings_form.model_chains_button.clicked.connect(
             self.show_model_chains_dialog)
         scroll_area = QScrollArea()
@@ -1349,6 +1386,18 @@ class AutoCaptioner(QDockWidget):
                 'before comparing prompts.')
             return
         dialog = PromptComparisonDialog(self)
+        dialog.exec()
+
+    @Slot()
+    def show_ai_comparison_dialog(self):
+        if self.is_captioning:
+            QMessageBox.warning(
+                self, 'Auto-Captioner Busy',
+                'Captioning is already running. Wait for it to finish '
+                'before running an AI comparison.')
+            return
+        from dialogs.ai_comparison_dialog import AIComparisonDialog
+        dialog = AIComparisonDialog(self)
         dialog.exec()
 
     @Slot()
