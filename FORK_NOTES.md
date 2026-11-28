@@ -377,6 +377,37 @@ lifetime:
   without relying on that overload
   (`taggui/dialogs/model_chain_dialog.py`,
   `taggui/dialogs/prompt_comparison_dialog.py`).
+- **A Model Chains step with a saved `Test run` count froze the whole
+  chain.** `AutoCaptioner` wires up `CaptioningThread.pilot_run_finished_requested`
+  to pause and ask whether to continue after N images; `ModelChainDialog`
+  never did, so a step saved with a nonzero test-run count would wait
+  forever for a decision that could never arrive - the thread never
+  finished, and the chain looked frozen. Fixed by forcing
+  `test_run_image_count` to 0 for every chain step, the same way
+  `PromptComparisonDialog` already did
+  (`taggui/dialogs/model_chain_dialog.py:start_step()`).
+- **Qwen3-VL/Qwen3.5's `Min tokens`/`Max tokens` didn't bound what the
+  user actually sees when thinking is enabled**, because they're plain
+  `generate()` kwargs that count the *whole* generation, including the
+  model's hidden `<think>...</think>` reasoning - not just the visible
+  caption after it. A small `Max tokens` could cut generation off
+  mid-thought, before the closing `</think>` tag was ever produced, so
+  there was nothing for `postprocess_generated_text` to strip and the raw
+  unfinished reasoning became the "caption" (reading as the model
+  silently stalling/failing to produce one). A large `Min tokens` could
+  likewise force the model to keep rambling *after* its real answer was
+  already done, since the hidden reasoning counted toward that minimum
+  too. Fixed by reinterpreting both settings as bounds on the tokens
+  generated after the closing `</think>` tag specifically, via a custom
+  `LogitsProcessor` (suppresses EOS below the visible minimum) and a
+  per-row `StoppingCriteria` (stops once the visible maximum is reached),
+  with a separate, generous, fixed budget
+  (`THINKING_TOKEN_BUDGET`) backstopping the hidden reasoning itself so
+  generation is always bounded even if a model never closes its `<think>`
+  block (`taggui/auto_captioning/auto_captioning_model.py`,
+  `taggui/auto_captioning/models/qwen3_vl.py:get_generation_parameters()`).
+  Thinking-disabled generation (and every non-thinking model) is
+  unaffected - the settings are passed straight through as before.
 
 ## Known limitations / things to verify on real hardware
 

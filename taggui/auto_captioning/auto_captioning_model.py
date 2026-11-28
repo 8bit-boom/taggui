@@ -10,7 +10,8 @@ import torch
 from PIL import Image as PilImage
 from PIL.ImageOps import exif_transpose
 from transformers import (AutoProcessor, BatchFeature, BitsAndBytesConfig,
-                          StoppingCriteria, StoppingCriteriaList)
+                          LogitsProcessor, StoppingCriteria,
+                          StoppingCriteriaList)
 from transformers.utils.import_utils import is_torch_bf16_gpu_available
 
 try:
@@ -103,6 +104,100 @@ class CancelCaptioningWhenRequested(StoppingCriteria):
 
     def __call__(self, input_ids, scores, **kwargs) -> bool:
         return self.captioning_thread.is_canceled
+
+
+# A generous, fixed ceiling on hidden reasoning (independent of the user's
+# own `Min`/`Max tokens` settings below) so a thinking model that never
+# closes its `<think>` block for some other reason doesn't hold up
+# generation forever.
+THINKING_TOKEN_BUDGET = 1024
+# How many of the most recently generated tokens to re-decode, each step,
+# while looking for the closing `</think>` tag. A small fixed window keeps
+# the check's cost constant per step (instead of growing with how long the
+# model has been thinking so far), while still being wide enough that the
+# tag can't be split across the window boundary by tokenization.
+THINK_CLOSE_DETECTION_WINDOW = 32
+
+
+class VisibleCaptionLengthState:
+    """
+    Shared, per-row bookkeeping for the two classes below: how many newly
+    generated tokens, since the model's closing `</think>` tag (if any),
+    count as the actual visible caption rather than hidden reasoning.
+
+    The `Min`/`Max tokens` settings are meant to bound the visible caption
+    a user actually sees, not whatever a reasoning model spent thinking -
+    otherwise a small `Max tokens` truncates generation mid-thought
+    (leaving no closing `</think>` tag for `postprocess_generated_text` to
+    even recognize, so the raw, truncated reasoning becomes the "caption"
+    instead of being stripped), and a large `Min tokens` forces the model
+    to keep rambling after its real answer is already done, since the
+    hidden reasoning would otherwise count toward that minimum too.
+    """
+
+    def __init__(self, tokenizer, prompt_length: int):
+        self.tokenizer = tokenizer
+        self.prompt_length = prompt_length
+        # Row index -> the newly-generated-token count at the step the
+        # closing `</think>` was first seen (visible-token counting starts
+        # from there). Absent while a row is still thinking.
+        self._visible_start: dict[int, int] = {}
+
+    def visible_token_count(self, input_ids, row: int) -> int:
+        generated = input_ids[row, self.prompt_length:]
+        num_generated = generated.shape[0]
+        if row not in self._visible_start:
+            window_start = max(0, num_generated - THINK_CLOSE_DETECTION_WINDOW)
+            window_text = self.tokenizer.decode(generated[window_start:],
+                                                skip_special_tokens=False)
+            if '</think>' in window_text:
+                # A few trailing tokens already past the tag may be
+                # undercounted by one step; harmless for a length guard.
+                self._visible_start[row] = num_generated
+            elif num_generated >= THINKING_TOKEN_BUDGET:
+                # Thinking ran past its own generous budget without ever
+                # closing - treat everything generated so far as visible
+                # instead of never producing a caption at all.
+                self._visible_start[row] = 0
+            else:
+                return 0
+        return num_generated - self._visible_start[row]
+
+
+class SuppressEosUntilVisibleMinLength(LogitsProcessor):
+    """See `VisibleCaptionLengthState`. Suppresses EOS until `min_new_tokens`
+    visible tokens have been generated for a row."""
+
+    def __init__(self, state: VisibleCaptionLengthState, min_new_tokens: int,
+                eos_token_ids: list[int]):
+        self.state = state
+        self.min_new_tokens = min_new_tokens
+        self.eos_token_ids = eos_token_ids
+
+    def __call__(self, input_ids, scores):
+        if self.min_new_tokens <= 0 or not self.eos_token_ids:
+            return scores
+        for row in range(input_ids.shape[0]):
+            if (self.state.visible_token_count(input_ids, row)
+                    < self.min_new_tokens):
+                scores[row, self.eos_token_ids] = -float('inf')
+        return scores
+
+
+class VisibleCaptionMaxLengthCriteria(StoppingCriteria):
+    """See `VisibleCaptionLengthState`. Stops each row once `max_new_tokens`
+    visible tokens have been generated for it."""
+
+    def __init__(self, state: VisibleCaptionLengthState, max_new_tokens: int):
+        self.state = state
+        self.max_new_tokens = max_new_tokens
+
+    def __call__(self, input_ids, scores, **kwargs):
+        return torch.tensor(
+            [self.state.visible_token_count(input_ids, row)
+             >= self.max_new_tokens for row in range(input_ids.shape[0])],
+            device=input_ids.device, dtype=torch.bool)
+
 
 # Caption-settings value -> `from_pretrained(attn_implementation=...)`
 # value. `Sage attention` is not an `attn_implementation` because it works
@@ -633,13 +728,19 @@ class AutoCaptioningModel:
                     'cache_config': {'backend': 'fp8'}}
         return {}
 
+    def get_additional_stopping_criteria(self) -> list[StoppingCriteria]:
+        """Extra stopping criteria beyond cancellation; overridden by models
+        that need to bound generation some other way (see `Qwen3VL`)."""
+        return []
+
     def run_generate(self, model_inputs: BatchFeature | dict | np.ndarray,
                      parameters: dict) -> torch.Tensor:
         # Stop mid-generation as soon as the user cancels, instead of
         # finishing the current image's whole token budget first. The
         # partial generation is discarded by the captioning thread.
         parameters.setdefault('stopping_criteria', StoppingCriteriaList(
-            [CancelCaptioningWhenRequested(self.thread)]))
+            [CancelCaptioningWhenRequested(self.thread),
+             *self.get_additional_stopping_criteria()]))
         with torch.inference_mode():
             try:
                 return self.get_generation_model().generate(**model_inputs,

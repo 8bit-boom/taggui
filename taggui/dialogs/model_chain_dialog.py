@@ -237,7 +237,13 @@ class ModelChainDialog(QDialog):
         self.start_step()
 
     def start_step(self):
-        step_settings = self.steps[self.step_index]
+        step_settings = dict(self.steps[self.step_index])
+        # A step's test-run pause/prompt has nowhere to surface here (only
+        # `AutoCaptioner` wires up `pilot_run_finished_requested`, to show
+        # the main window's pause dialog) - without this, a step saved with
+        # a nonzero `Test run` count would wait forever for a decision that
+        # never comes, freezing the whole chain.
+        step_settings['test_run_image_count'] = 0
         selected_image_count = len(self.selected_image_indices)
         if step_settings.get(
                 'caption_position', CaptionPosition.DO_NOT_ADD

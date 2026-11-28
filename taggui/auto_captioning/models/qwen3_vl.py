@@ -11,8 +11,12 @@ try:
 except ImportError:
     Qwen3VLForConditionalGeneration = None
 
-from auto_captioning.auto_captioning_model import (AutoCaptioningModel,
-                                                   THINK_BLOCK_PATTERN)
+from transformers import LogitsProcessorList
+
+from auto_captioning.auto_captioning_model import (
+    AutoCaptioningModel, SuppressEosUntilVisibleMinLength, THINK_BLOCK_PATTERN,
+    THINKING_TOKEN_BUDGET, VisibleCaptionLengthState,
+    VisibleCaptionMaxLengthCriteria)
 from utils.image import Image
 
 # Tuned to keep VRAM usage reasonable on a 32 GB GPU. The UI exposes both
@@ -33,6 +37,11 @@ class Qwen3VL(AutoCaptioningModel):
     # into one batch, so several images can be captioned per `generate()`
     # call (the biggest in-process speedup).
     supports_batching = True
+    # Set by `get_generation_parameters()` just before each `generate()`
+    # call, read back by `get_additional_stopping_criteria()` right after;
+    # see the long comment on `VisibleCaptionLengthState` below for why.
+    _visible_max_new_tokens: int | None = None
+    _visible_length_state: VisibleCaptionLengthState | None = None
 
     def get_additional_error_message(self) -> str | None:
         if Qwen3VLForConditionalGeneration is None:
@@ -165,6 +174,52 @@ class Qwen3VL(AutoCaptioningModel):
         # The padded input length, shared by all rows under left padding.
         self.input_token_count = model_inputs['input_ids'].shape[-1]
         return model_inputs
+
+    def _get_eos_token_ids(self) -> list[int]:
+        eos_token_id = self.get_generation_model().generation_config.eos_token_id
+        if eos_token_id is None:
+            return []
+        if isinstance(eos_token_id, int):
+            return [eos_token_id]
+        return list(eos_token_id)
+
+    def get_generation_parameters(self) -> dict:
+        """
+        Reinterprets `min_new_tokens`/`max_new_tokens` as bounds on the
+        visible caption rather than on the whole generation, when thinking
+        is enabled - see `VisibleCaptionLengthState` for why. Disabled
+        thinking has no hidden reasoning to separate out, so the settings
+        are passed straight through as `generate()` already understands
+        them, same as every other model.
+        """
+        parameters = super().get_generation_parameters()
+        if self.disable_thinking:
+            self._visible_max_new_tokens = None
+            return parameters
+        min_new_tokens = parameters.pop('min_new_tokens', 0) or 0
+        max_new_tokens = parameters.pop('max_new_tokens', None)
+        self._visible_length_state = VisibleCaptionLengthState(
+            self.get_tokenizer(), self.input_token_count)
+        self._visible_max_new_tokens = max_new_tokens
+        eos_token_ids = self._get_eos_token_ids()
+        if min_new_tokens > 0 and eos_token_ids:
+            logits_processor = (parameters.get('logits_processor')
+                                or LogitsProcessorList())
+            logits_processor.append(SuppressEosUntilVisibleMinLength(
+                self._visible_length_state, min_new_tokens, eos_token_ids))
+            parameters['logits_processor'] = logits_processor
+        if max_new_tokens is not None:
+            # A hard ceiling on hidden reasoning plus the visible caption,
+            # so `generate()` is always bounded even if the per-row
+            # `VisibleCaptionMaxLengthCriteria` below never fires.
+            parameters['max_new_tokens'] = THINKING_TOKEN_BUDGET + max_new_tokens
+        return parameters
+
+    def get_additional_stopping_criteria(self) -> list:
+        if self.disable_thinking or self._visible_max_new_tokens is None:
+            return []
+        return [VisibleCaptionMaxLengthCriteria(self._visible_length_state,
+                                                self._visible_max_new_tokens)]
 
     def generate_captions_batch(
             self, model_inputs, batch: list[dict]) -> tuple[list[str],
