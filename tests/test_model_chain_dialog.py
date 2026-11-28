@@ -142,6 +142,26 @@ def test_chain_runs_steps_sequentially_and_applies_tags(
     assert 'step caption for Describe.' in joined_tags
 
 
+def test_closing_dialog_mid_run_does_not_raise(
+        qtbot, isolated_settings, fake_model_class, tmp_path):
+    # Regression test: `QObject.disconnect()` with no arguments always
+    # raises `TypeError` in PySide6 (it isn't a valid overload), so closing
+    # (or canceling) the dialog while a step's thread is running used to
+    # crash inside `closeEvent`/`cancel_current_run`.
+    app = QApplication.instance() or QApplication([])
+    from dialogs.model_chain_dialog import ModelChainDialog
+
+    captioner, _ = build_captioner(qtbot, tmp_path)
+    dialog = ModelChainDialog(captioner)
+    qtbot.addWidget(dialog)
+    dialog.add_step()
+
+    dialog.start_or_stop()
+    assert dialog.captioning_thread is not None
+    dialog.close()
+    assert dialog.captioning_thread is None
+
+
 def test_add_remove_move_steps(qtbot, isolated_settings, fake_model_class,
                                tmp_path):
     app = QApplication.instance() or QApplication([])

@@ -301,6 +301,21 @@ lifetime:
 - **Export Dataset's "Tag frequency CSV" ignored the Scope setting**,
   always reading from the dataset-wide tag counter instead of the
   actually-selected/filtered image scope.
+- **Closing (or canceling) Model Chains or Compare Prompts mid-run always
+  crashed.** Both dialogs' `cancel_current_run()` called
+  `thread.disconnect()` with no arguments to detach the running
+  `CaptioningThread`'s signals before canceling it - but in this PySide6
+  version, `QObject.disconnect()` with no arguments always raises
+  `TypeError` (it isn't a valid overload here, unlike some other Qt
+  bindings), and since this happened inside a Python override of
+  `QDialog::closeEvent()`, the exception crossed back into C++ and
+  aborted the whole process rather than surfacing as a normal Python
+  traceback. Fixed by blocking the thread's signals
+  (`thread.blockSignals(True)`) instead of disconnecting them, which
+  achieves the same goal (late signals can't touch the closing dialog)
+  without relying on that overload
+  (`taggui/dialogs/model_chain_dialog.py`,
+  `taggui/dialogs/prompt_comparison_dialog.py`).
 
 ## Known limitations / things to verify on real hardware
 

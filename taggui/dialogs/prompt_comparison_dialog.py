@@ -183,10 +183,13 @@ class PromptComparisonDialog(QDialog):
         if self.captioning_thread is None:
             return
         thread = self.captioning_thread
-        # Disconnect before canceling so that late signals can't touch the
-        # closing dialog; the thread itself stops at its next cancel check
-        # (immediately for local models, via the stopping criteria).
-        thread.disconnect()
+        # Block signals before canceling so that late signals can't touch
+        # the closing dialog; the thread itself stops at its next cancel
+        # check (immediately for local models, via the stopping criteria).
+        # (`thread.disconnect()` with no arguments always raises
+        # `TypeError` in PySide6 - it isn't a valid overload - so signals
+        # are blocked instead of disconnected.)
+        thread.blockSignals(True)
         thread.is_canceled = True
         self.captioning_thread = None
         self.finish_run()
