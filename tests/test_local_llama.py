@@ -47,8 +47,9 @@ def test_ensure_cuda_dll_path_noop_on_non_windows(monkeypatch):
     monkeypatch.setattr(local_llama.sys, 'platform', 'linux')
     # Should return without touching os.add_dll_directory.
     called = []
+    # `os.add_dll_directory` only exists on Windows.
     monkeypatch.setattr(local_llama.os, 'add_dll_directory',
-                        lambda *a: called.append(a))
+                        lambda *a: called.append(a), raising=False)
     local_llama.ensure_cuda_dll_path()
     assert called == []
 
